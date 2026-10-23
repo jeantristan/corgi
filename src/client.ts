@@ -5,6 +5,7 @@ import { runTest } from "./viewer_test";
 import { Probe } from "./host_probe";
 import * as keyboard from "./keyboard";
 import * as hostBackground from "./host_background";
+import * as crash from "./crash";
 import type { Transport } from "./mirror";
 
 let keyboard_enabled = false;
@@ -35,6 +36,16 @@ function signalHandler(): void {
   cleanup();
   process.exit(0);
 }
+/** A crash gives the terminal back before its error prints, which the
+ * viewer's own screen would otherwise swallow. Bun prints a thrown error
+ * after the monitor but a rejection before any handler, and loses its stack
+ * when one is thrown again, so a rejection prints here. */
+function rejected(reason: unknown): void {
+  cleanup();
+  crash.notePanic(reason);
+  console.error(reason);
+  process.exit(1);
+}
 /** Opens on the workspace for `folder` when one is given. */
 export async function attach(path: string, folder: string | null = null): Promise<void> {
   return attachMode(path, false, folder);
@@ -58,6 +69,8 @@ async function attachOnce(path: string, start_onboarding: boolean, folder: strin
   restore = true;
   process.on("SIGTERM", signalHandler);
   process.on("SIGHUP", signalHandler);
+  process.on("uncaughtExceptionMonitor", cleanup);
+  process.on("unhandledRejection", rejected);
   const stdin = new Stdin();
   try {
     process.stdin.setRawMode(true);
@@ -89,6 +102,8 @@ async function attachOnce(path: string, start_onboarding: boolean, folder: strin
     cleanup();
     process.off("SIGTERM", signalHandler);
     process.off("SIGHUP", signalHandler);
+    process.off("uncaughtExceptionMonitor", cleanup);
+    process.off("unhandledRejection", rejected);
     conn.close();
   }
 }

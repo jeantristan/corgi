@@ -22,6 +22,8 @@ import { join } from "node:path";
 import { Menu as SetupMenu, items as setupItems } from "./corgi_setup";
 import * as hostClipboard from "./host_clipboard";
 import * as keyboard from "./keyboard";
+import * as keymap from "./keymap";
+import * as bindings from "./bindings";
 import * as viewer from "./viewer";
 import { agent, type Pane } from "./mirror";
 import * as summaries from "./review/summaries";
@@ -76,6 +78,34 @@ test.each(["typing", "kitty key", "click", "resize", "flourishes off"])(
     }
   },
 );
+
+test("a sign-in takes the prefix only to detach or to type it", async () => {
+  const s = controller(),
+    open = spyOn(signin.Signin.prototype, "open").mockResolvedValue(undefined),
+    prefix = String.fromCharCode(keymap.prefixByte(s.prefs.prefix)),
+    detach = String.fromCharCode(bindings.find(s.prefs.preset, { name: "detach" })!.key),
+    close = String.fromCharCode(bindings.find(s.prefs.preset, { name: "close" })!.key);
+  s.receiveSnapshot(folders("/a"));
+  s.input_state.attached = true;
+  let flow: signin.Signin | null = null;
+  try {
+    s.openSignin((host: signin.Host) => (flow = new signin.Signin(true, false, host)));
+    const typed = spyOn(flow!, "input").mockResolvedValue(undefined);
+    await s.input(Buffer.from(prefix + close));
+    expect(s.signin).toBe(flow);
+    expect(s.prefix).toBe(false);
+    expect(typed).not.toHaveBeenCalled();
+    await s.input(Buffer.from(prefix + prefix));
+    expect(typed).toHaveBeenCalledWith(Uint8Array.of(prefix.charCodeAt(0)));
+    // The prefix as a Kitty keyboard terminal sends it.
+    await s.input(Buffer.from(`\x1b[${prefix.charCodeAt(0) + 96};5u` + detach));
+    expect(s.input_state.attached).toBe(false);
+  } finally {
+    s.signin?.close(1);
+    open.mockRestore();
+    viewer.close(s);
+  }
+});
 
 test.each([0, 50])(
   "account completion holds the old frame and starts immediately at flourish intensity %i",

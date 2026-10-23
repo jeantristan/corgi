@@ -617,6 +617,24 @@ export class Controller {
     if (!["focus", "choose-workspace", "choose-agent", "review"].includes(act.name)) this.giveKeyboard("pane");
     await this.perform(act);
   }
+  /** Whether the prefix, or the key after it, was a sign-in's to take. Only
+   * detach runs over a sign-in: other commands act on what it covers and
+   * puts back when it closes. The prefix twice types it. */
+  private async signinPrefix(byte: number, key_event: keyboard.Key | null): Promise<boolean> {
+    const prefix_byte = keymap.prefixByte(this.prefs.prefix);
+    if (!this.prefix) {
+      if (byte !== prefix_byte) return false;
+      this.prefix = true;
+      return true;
+    }
+    this.prefix = false;
+    if (byte === prefix_byte) return false;
+    const act = key_event
+      ? bindings.chord(this.prefs.preset, true, key_event)
+      : bindings.lookup(this.prefs.preset, true, byte, {});
+    if (act?.name === "detach") await this.perform(act);
+    return true;
+  }
   /** Whether a repeatable key came again inside its window, which it
    * extends, or else closes. The sidebar and the review panel take plain
    * arrows themselves, but they keep the window open, so focus can leave
@@ -3421,6 +3439,7 @@ export class Controller {
     this.repeat_until = 0;
     // A sign-in has the keyboard; what its agent is sent passes through it.
     if (this.signin) {
+      if (await this.signinPrefix(byte, null)) return;
       await this.signin.input(Uint8Array.of(byte));
       this.dirty = true;
       return;
@@ -4167,6 +4186,11 @@ export class Controller {
           // Its agent gets keys as its terminal asked for them; the frame reads them plain.
           const s = this.signin,
             plain = viewerNative.encodeKey(null, key_event.codepoint, key_event.mods);
+          if (plain.length === 1 && (await this.signinPrefix(plain.charCodeAt(0), key_event))) {
+            this.dirty = true;
+            used += len;
+            continue;
+          }
           if (s.typing && plain !== "\x03" && plain !== "\x11")
             s.send(viewerNative.encodeKey(s.child!.handle, key_event.codepoint, key_event.mods));
           else await s.input(plain);
