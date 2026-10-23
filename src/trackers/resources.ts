@@ -74,6 +74,9 @@ function mergeProcesses(old: Process[], next: Process[], n: number): Process[] {
       p = (now ?? was)!;
     return Object.assign(new Process(p.pid, p.start, p.name), {
       provider: p.provider,
+      parent: p.parent,
+      pane: p.pane,
+      session: p.session,
       cpu: mean(was ? was.cpu : 0, now ? now.cpu : 0, n),
       memory: peak(was?.memory ?? null, now?.memory ?? null) ?? 0n,
       read: meanBig(was ? was.read : 0n, now ? now.read : 0n, n),
@@ -136,6 +139,10 @@ export class Process {
   gpu_memory: bigint | null = null;
   /** Its figures on each device it uses. */
   gpu_devices: gpu.Share[] = [];
+  /** Its parent's pid, and the pane or background session it runs under. */
+  parent = 0;
+  pane: number | null = null;
+  session: number | null = null;
   constructor(
     public pid: number,
     public start: bigint,
@@ -227,6 +234,9 @@ export function fromJSON(value: Wire<Snapshot> | null | undefined): Snapshot {
       gpu: p.gpu ?? null,
       gpu_memory: nullable(p.gpu_memory),
       gpu_devices: (p.gpu_devices ?? []).map(share),
+      parent: p.parent ?? 0,
+      pane: p.pane ?? null,
+      session: p.session ?? null,
     });
   const restoreWork = (w: Wire<Work>) =>
     Object.assign(new Work(w.id), w, {
@@ -269,6 +279,8 @@ export type Root = {
   workspace: number;
   agent_pid: number;
   provider: Provider | null;
+  pane: number | null;
+  session: number | null;
 };
 export type Reading = {
   pid: number;
@@ -321,6 +333,14 @@ export function owner(
     current = identity.parent;
   }
   return null;
+}
+export type Signal = "term" | "kill";
+/** Sends `signal` to a process the snapshot shows in `workspace`, if it is
+ * still that process rather than a later one given its pid. */
+export function signal(view: Snapshot, workspace: number, pid: number, start: bigint, signal: Signal): void {
+  const shown = view.workspaces.find(w => w.id === workspace)?.processes.some(p => p.pid === pid && p.start === start);
+  if (!shown || pid === process.pid || native.counters(pid)?.start !== start) throw Error("NoProcess");
+  process.kill(pid, signal === "term" ? "SIGTERM" : "SIGKILL");
 }
 export function rate(old: bigint | null, next: bigint | null, ms: number) {
   if (old === null || next === null || next < old) return null;
@@ -481,6 +501,8 @@ export class Tracker {
                 workspace: w.id,
                 agent_pid: p.detection.pid,
                 provider: p.agent().provider,
+                pane: p.id,
+                session: null,
               },
             ]
           : [];
@@ -495,6 +517,8 @@ export class Tracker {
           workspace: s.workspace_id,
           agent_pid: pid,
           provider: s.provider,
+          pane: null,
+          session: s.id,
         });
     }
     this.done = false;
@@ -624,7 +648,7 @@ export class Tracker {
       const proc = Object.assign(
         new Process(identity.pid, value.start, identity.name),
         delta(previous.get(identity.pid), reading),
-        { memory: value.memory },
+        { memory: value.memory, parent: identity.parent, pane: root.pane, session: root.session },
       );
       if (identity.pid === root.agent_pid) proc.provider = root.provider;
       work.processes.push(proc);

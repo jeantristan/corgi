@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { geometry, aimed, draw, hoverAt, State } from "./resource_tooltip";
+import { geometry, aimed, draw, hoverAt, State, buttonAt, rowAt } from "./resource_tooltip";
 import { Rect } from "./layout";
 import { Writer } from "./text";
 import { Terminal } from "./pane/terminal";
@@ -377,4 +377,98 @@ test("a GPU heatmap cell lists the processes on the GPUs at its line", () => {
   expect(lines[header + 3]).toMatch(/rank\d gpu [0-2] /);
   expect(lines[header + 4]).not.toContain("rank");
   expect(lines[rect.y + rect.h - 2]).toContain("3 processes on gpu 0-2 0s ago");
+});
+test("a pinned card keeps its rows put: new processes join at the foot, gone ones stay as gone", () => {
+  const state = new State(),
+    processes = [
+      { pid: 1, start: 10n, name: "first", cpu: 90 },
+      { pid: 2, start: 20n, name: "second", cpu: 10 },
+    ],
+    work = { id: 1, known: true, processes };
+  state.update(work, true);
+  state.pin();
+  state.move(1);
+  processes[0].cpu = 0;
+  processes[1].cpu = 100;
+  processes.push({ pid: 3, start: 30n, name: "third", cpu: 500 });
+  state.update(work, true);
+  expect(state.order.map(k => k.pid)).toEqual([1, 2, 3]);
+  expect(state.selected?.pid).toBe(2);
+  processes.shift();
+  state.update(work, true);
+  const w = new Writer(),
+    terminal = new Terminal(120, 30);
+  try {
+    draw(w, new Rect(0, 0, 82, 24), "repo", { workspaces: [work] }, state);
+    terminal.feed(w.buffered());
+    expect(terminal.text().split("\n")[15]).toMatch(/1 exited/);
+  } finally {
+    terminal.destroy();
+  }
+  // Sorting again moves the rows, and the selection goes with its process.
+  state.step(true);
+  state.update(work, true);
+  expect(state.sort).toBe("memory");
+  expect(state.selected?.pid).toBe(2);
+});
+test("the selection scrolls the table and stays on its process", () => {
+  const processes = Array.from({ length: 12 }, (_, i) => ({ pid: i + 1, start: 1n, name: `p${i}`, cpu: 100 - i })),
+    state = new State();
+  state.update({ id: 1, processes }, true);
+  state.pin();
+  for (let i = 0; i < 7; i++) state.move(1);
+  state.reveal(5);
+  expect([state.selected?.pid, state.offset]).toEqual([8, 3]);
+  state.move(-10);
+  state.reveal(5);
+  expect([state.selected?.pid, state.offset]).toEqual([1, 0]);
+});
+test("tags work as htop's: space tags and moves down, c tags a process and what it started", () => {
+  const processes = [
+      { pid: 10, start: 1n, name: "shell", cpu: 4, parent: 1 },
+      { pid: 11, start: 1n, name: "vite", cpu: 3, parent: 10 },
+      { pid: 12, start: 1n, name: "esbuild", cpu: 2, parent: 11 },
+      { pid: 13, start: 1n, name: "other", cpu: 1, parent: 1 },
+    ],
+    state = new State();
+  state.update({ id: 1, processes }, true);
+  state.pin();
+  expect(state.targets().map(k => k.pid)).toEqual([10]);
+  state.move(1);
+  state.tagTree(processes);
+  expect(state.targets().map(k => k.pid)).toEqual([11, 12]);
+  state.untag();
+  state.toggle();
+  expect([state.targets().map(k => k.pid), state.selected?.pid]).toEqual([[11], 12]);
+  state.toggle();
+  expect(state.targets().map(k => k.pid)).toEqual([11, 12]);
+});
+test("the pinned card's bar names where the process runs, then asks before a signal", () => {
+  const processes = [{ pid: 98112, start: 1n, name: "vite", cpu: 20, pane: 3 }],
+    rect = new Rect(0, 0, 82, 24),
+    state = new State({ place: "api › tab 2" }),
+    screen = () => {
+      const w = new Writer(),
+        terminal = new Terminal(120, 30);
+      try {
+        draw(w, rect, "api", { workspaces: [{ id: 1, known: true, processes }] }, state);
+        terminal.feed(w.buffered());
+        return terminal.text().split("\n");
+      } finally {
+        terminal.destroy();
+      }
+    };
+  state.update({ id: 1, processes }, true);
+  state.pin();
+  let lines = screen();
+  expect(lines[21]).toMatch(/vite · api › tab 2 +↵ go to pane +t term +k kill/);
+  expect(lines[22]).toContain("↑↓ select  ←→ sort  space tag");
+  const kill = lines[21].indexOf("k kill");
+  expect(buttonAt(rect, kill, 21)).toBe("kill");
+  expect(buttonAt(rect, lines[21].indexOf("go to pane"), 21)).toBe("go");
+  expect(buttonAt(rect, kill, 20)).toBe(null);
+  expect(rowAt(rect, 20, 15)).toBe(0);
+  state.confirm = "kill";
+  lines = screen();
+  expect(lines[21]).toContain("Kill vite (98112) with SIGKILL? k again · esc");
 });

@@ -110,6 +110,12 @@
   "worktree.stop": {
     "workspace": 1
   },
+  "process.signal": {
+    "workspace": 1,
+    "pid": 4242,
+    "start": 17,
+    "signal": "term"
+  },
   "worktree.brief": {
     "workspace": 1
   },

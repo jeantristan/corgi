@@ -633,6 +633,13 @@ export class Server {
         this.runtime.worktree_tracker.stopRemoval(request.payload.workspace);
         cl.queue({ ok: true });
         return;
+      case "process.signal": {
+        const { workspace, pid, start, signal } = request.payload;
+        trackers.resources.signal(this.runtime.resources.current, workspace, pid, start, signal);
+        this.runtime.resources.next_refresh = 0;
+        cl.queue({ ok: true });
+        return;
+      }
       case "worktree.brief":
         this.runtime.worktree_briefs.refresh(this.runtime, request.payload.workspace);
         this.runtime.refreshed();

@@ -422,3 +422,35 @@ test("an image link's popover shows a thumbnail on Kitty hosts and frees it when
     rmSync(dir, { recursive: true, force: true });
   }
 });
+test("an arrow over the resource card selects its top row first, or else moves from the hovered one", async () => {
+  const s = linkViewer();
+  s.prefs.resources.enabled = true;
+  s.runtime.receiveResources({
+    workspaces: [
+      {
+        id: 1,
+        cpu: 30,
+        processes: [
+          { pid: 10, start: 1, name: "first", cpu: 20 },
+          { pid: 11, start: 1, name: "second", cpu: 10 },
+          { pid: 12, start: 1, name: "third", cpu: 5 },
+        ],
+      },
+    ],
+  } as any);
+  const hover = () => {
+    s.resource_card.release();
+    s.link_tooltip.target = { resource: 1 };
+    s.link_tooltip.shown = true;
+    s.resource_card.update(s.runtime.resources.workspaces[0], true);
+  };
+  hover();
+  await s.input(Buffer.from("\x1b[B"));
+  expect([s.resource_card.pinned, s.resource_card.selected?.pid]).toEqual([true, 10]);
+  await s.input(Buffer.from("\x1b[B"));
+  expect(s.resource_card.selected?.pid).toBe(11);
+  hover();
+  s.resource_card.selected = s.resource_card.order[1];
+  await s.input(Buffer.from("\x1b[B"));
+  expect([s.resource_card.pinned, s.resource_card.selected?.pid]).toEqual([true, 12]);
+});

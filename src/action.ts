@@ -25,6 +25,16 @@ export const specs: Record<string, string> = {
   "worktree-stop": "void",
   "worktree-refresh": "void",
   "worktree-review": "void",
+  resources: "usize",
+  "resource-next": "void",
+  "resource-prev": "void",
+  "resource-sort": "Side",
+  "resource-tag": "void",
+  "resource-tag-tree": "void",
+  "resource-untag": "void",
+  "resource-go": "void",
+  "resource-signal": "Signal",
+  "resource-close": "void",
   "goto-workspace": "usize",
   "close-workspace": "void",
   open: "[]const u8",
@@ -66,14 +76,19 @@ export function parse(name: string, value = ""): Action {
   if (!type) throw new Error("UnknownAction");
   if (type === "void") return { name };
   if (type === "usize") {
-    if (name === "worktrees" && !value) return { name, value: 0 };
+    if ((name === "worktrees" || name === "resources") && !value) return { name, value: 0 };
     if (!/^\+?\d+$/.test(value)) throw new Error("BadValue");
     const number = Number(value);
     if (!Number.isSafeInteger(number)) throw new Error("BadValue");
     return { name, value: number };
   }
   if (type === "[]const u8") return { name, value };
-  const values = type === "layout.Direction" ? ["left", "down", "up", "right"] : ["left", "right"];
+  const values =
+    type === "layout.Direction"
+      ? ["left", "down", "up", "right"]
+      : type === "Signal"
+        ? ["term", "kill"]
+        : ["left", "right"];
   if (type === "Split") values.splice(0, 2, "right", "down");
   if (!value && (type === "Side" || type === "Split")) value = "right";
   if (!values.includes(value)) throw new Error("BadValue");
@@ -123,6 +138,7 @@ export function title(action: Action): string {
     "close-workspace": "Close workspace",
     "choose-workspace": "Choose workspace",
     worktrees: "Show worktrees",
+    resources: "Show resources",
     "goto-workspace": "Select workspace",
     open: "Open folder as workspace",
     "new-agent": "New agent",

@@ -5,7 +5,7 @@
 import { Style, derived, colors, mix, fgRgb } from "./palette";
 import { Provider, adapter } from "./providers";
 import { Rect } from "./layout";
-import { cpuText, ioText, history_bucket_ms, type Sort } from "./trackers/resources";
+import { cpuText, ioText, history_bucket_ms, type Sort, type Signal } from "./trackers/resources";
 import { Writer, displayWidth, writeClipped, directoryLabel, sat, zigRound } from "./text";
 
 // Each write sets a whole style, so bold never leaks into the next.
@@ -20,7 +20,18 @@ let text: string,
   cursor: string,
   spot: string,
   lit: string,
-  track: string;
+  track: string,
+  row_text: string,
+  row_faint: string,
+  row_strong: string,
+  tag: string,
+  row_tag: string,
+  bar: string,
+  bar_faint: string,
+  bar_key: string,
+  bar_off: string,
+  bar_warm: string,
+  bar_hot: string;
 derived(() => {
   text = new Style({ fg: "text", bg: "bg" }).sgr();
   faint = new Style({ fg: "faint", bg: "bg" }).sgr();
@@ -40,6 +51,18 @@ derived(() => {
   lit = new Style({ fg: "accent", bg: "selected" }).sgr();
   // A device's meter now, on its empty cell.
   track = new Style({ fg: "accent", bg: "selected" }).sgr();
+  row_text = new Style({ fg: "text", bg: "selected" }).sgr();
+  row_faint = new Style({ fg: "muted", bg: "selected" }).sgr();
+  row_strong = new Style({ fg: "strong", bg: "selected", bold: true }).sgr();
+  tag = new Style({ fg: "warm", bg: "bg" }).sgr();
+  row_tag = new Style({ fg: "warm", bg: "selected" }).sgr();
+  // The pinned card's bar: what its keys act on, and the keys.
+  bar = new Style({ fg: "text", bg: "surface" }).sgr();
+  bar_faint = new Style({ fg: "muted", bg: "surface" }).sgr();
+  bar_key = new Style({ fg: "strong", bg: "surface", bold: true }).sgr();
+  bar_off = new Style({ fg: "faint", bg: "surface" }).sgr();
+  bar_warm = new Style({ fg: "warm", bg: "surface", bold: true }).sgr();
+  bar_hot = new Style({ fg: "hot", bg: "surface", bold: true }).sgr();
 });
 
 export type { Sort };
@@ -129,6 +152,9 @@ export interface Process {
   gpu?: number | null;
   gpu_memory?: bigint | null;
   gpu_devices?: { index: number; util: number | null; memory: bigint | null }[];
+  parent?: number;
+  pane?: number | null;
+  session?: number | null;
 }
 function metricValue(sort: Sort, p: Process): number | null {
   switch (sort) {
@@ -153,9 +179,19 @@ export function less(sort: Sort, left: Process, right: Process, ascending = fals
   return ascending ? l < r : l > r;
 }
 const process_capacity = 64;
-interface Key {
+export interface Key {
   pid: number;
   start: string;
+}
+const keyOf = (p: { pid: number; start: bigint | string }): Key => ({ pid: p.pid, start: String(p.start) });
+const same = (a: Key, b: Key) => a.pid === b.pid && a.start === b.start;
+/** The process a row stands for, if it is still in `processes`. */
+export function find(processes: Process[], key: Key | null): Process | null {
+  return (key && processes.find(p => same(keyOf(p), key))) ?? null;
+}
+/** The sorts in the table's order, left to right. */
+function sorts(gpus: number): Sort[] {
+  return [...new Set(columns(gpus > 0, "").map(c => c.sort))];
 }
 export class State {
   workspace: number | null = null;
@@ -167,11 +203,24 @@ export class State {
   frozen = false;
   /** The host's GPUs, which give the card their graphs and columns. */
   gpus = 0;
+  /** Held open for the keyboard: a row is selected and the bar shows. */
+  pinned = false;
+  selected: Key | null = null;
+  tagged: Key[] = [];
+  /** The first row shown, when the selection runs past the table. */
+  offset = 0;
+  /** A signal waiting for its key again. */
+  confirm: Signal | null = null;
+  /** What the last signal did, until the next key. */
+  notice = "";
+  /** Where the selected process runs, or null in a background session. */
+  place: string | null = null;
   constructor(fields: Partial<State> = {}) {
     Object.assign(this, fields);
   }
   update(work: { id: number; processes?: Process[] }, freeze: boolean, gpus = 0): void {
     if (this.workspace !== work.id || (!gpus && (this.sort === "gpu" || this.sort === "gpu_memory"))) {
+      if (this.workspace !== work.id) this.release();
       this.workspace = work.id;
       this.count = 0;
       this.sort = "cpu";
@@ -180,15 +229,25 @@ export class State {
     }
     if (gpus !== this.gpus) this.frozen = false;
     this.gpus = gpus;
-    if (freeze && this.frozen && this.count > 0) return;
     const list = (work.processes ?? []).slice(0, process_capacity);
+    if (freeze && this.frozen && this.count > 0) {
+      // Pinned, rows stay put: new processes join at the foot, gone ones stay as gone.
+      if (this.pinned)
+        for (const p of list)
+          if (this.order.length < process_capacity && !this.order.some(k => same(k, keyOf(p))))
+            this.order.push(keyOf(p));
+      this.count = this.order.length;
+      return;
+    }
     // std.mem.sort is stable, as Array.sort is.
     const sort = this.sort,
       ascending = this.ascending;
     list.sort((a, b) => (less(sort, a, b, ascending) ? -1 : less(sort, b, a, ascending) ? 1 : 0));
-    this.order = list.map(p => ({ pid: p.pid, start: String(p.start) }));
+    this.order = list.map(keyOf);
     this.count = list.length;
     this.frozen = freeze;
+    if (this.pinned && !this.order.some(k => this.selected !== null && same(k, this.selected)))
+      this.selected = this.order[0] ?? null;
   }
   /** Sorts by the heading under a cell, the most first; the sorted heading turns it around. */
   click(rect: Rect, x: number, y: number): void {
@@ -197,6 +256,83 @@ export class State {
     this.ascending = sort === this.sort && !this.ascending;
     this.sort = sort;
     this.frozen = false;
+  }
+  /** Holds the card open with a row selected: `key`, or the top one. */
+  pin(key: Key | null = null): void {
+    this.pinned = true;
+    this.selected = key ?? (this.chosen() ? this.selected : null) ?? this.order[0] ?? null;
+    this.confirm = null;
+    this.notice = "";
+  }
+  /** Whether the selection is among the rows. */
+  chosen(): boolean {
+    return this.selected !== null && this.order.some(k => same(k, this.selected!));
+  }
+  release(): void {
+    this.pinned = false;
+    this.selected = null;
+    this.tagged = [];
+    this.offset = 0;
+    this.confirm = null;
+    this.notice = "";
+    this.frozen = false;
+  }
+  index(): number {
+    return Math.max(
+      0,
+      this.order.findIndex(k => this.selected !== null && same(k, this.selected)),
+    );
+  }
+  move(delta: number): void {
+    if (!this.order.length) return;
+    this.selected = this.order[Math.max(0, Math.min(this.order.length - 1, this.index() + delta))];
+    this.confirm = null;
+    this.notice = "";
+  }
+  /** Scrolls so the selection is among the `room` rows shown. */
+  reveal(room: number): void {
+    const i = this.index();
+    if (i < this.offset) this.offset = i;
+    else if (room > 0 && i >= this.offset + room) this.offset = i - room + 1;
+    this.offset = Math.max(0, Math.min(this.offset, this.order.length - room));
+  }
+  /** Sorts by the next column right, or left, the most first. */
+  step(right: boolean): void {
+    const list = sorts(this.gpus),
+      i = list.indexOf(this.sort);
+    this.sort = list[(i + (right ? 1 : list.length - 1)) % list.length];
+    this.ascending = false;
+    this.frozen = false;
+    this.confirm = null;
+  }
+  /** Tags the selected row, or untags it, and moves down, as htop does. */
+  toggle(): void {
+    const key = this.selected;
+    if (!key) return;
+    const at = this.tagged.findIndex(k => same(k, key));
+    if (at < 0) this.tagged.push(key);
+    else this.tagged.splice(at, 1);
+    this.move(1);
+  }
+  /** Tags the selected process and everything it started. */
+  tagTree(processes: Process[]): void {
+    const root = find(processes, this.selected);
+    if (!root) return;
+    const tree = [root];
+    for (let i = 0; i < tree.length; i++)
+      for (const p of processes) if (p.parent === tree[i].pid && !tree.includes(p)) tree.push(p);
+    for (const p of tree) if (!this.tagged.some(k => same(k, keyOf(p)))) this.tagged.push(keyOf(p));
+    this.confirm = null;
+    this.notice = "";
+  }
+  untag(): void {
+    this.tagged = [];
+    this.confirm = null;
+    this.notice = "";
+  }
+  /** What a signal goes to: the tagged rows, or else the selected one. */
+  targets(): Key[] {
+    return this.tagged.length ? [...this.tagged] : this.selected ? [this.selected] : [];
   }
 }
 interface Column {
@@ -235,6 +371,37 @@ export function sortAt(rect: Rect, x: number, y: number, gpus = 0): Sort | null 
   return column && x < rect.x + rect.w - 2 ? column.sort : null;
 }
 
+/** How many process rows the table has room for. */
+export function rows(rect: Rect, gpus = 0): number {
+  return sat(rect.h, 19 + gpuShift(rect, gpus));
+}
+/** The process row under a cell, counted from the first shown. */
+export function rowAt(rect: Rect, x: number, y: number, gpus = 0): number | null {
+  const first = rect.y + 15 + gpuShift(rect, gpus);
+  return x > rect.x && x < rect.x + rect.w - 1 && y >= first && y < first + rows(rect, gpus) ? y - first : null;
+}
+export type Button = "go" | "term" | "kill";
+/** The pinned card's buttons, right to left from the border. */
+const buttons: { button: Button; key: string; label: string }[] = [
+  { button: "kill", key: "k", label: "kill" },
+  { button: "term", key: "t", label: "term" },
+  { button: "go", key: "↵", label: "go to pane" },
+];
+function buttonSpans(rect: Rect) {
+  let x = rect.x + rect.w - 3;
+  return buttons.map(b => {
+    const width = displayWidth(`${b.key} ${b.label}`);
+    x -= width;
+    const span = { ...b, x, width };
+    x -= 3;
+    return span;
+  });
+}
+/** The bar's button under a cell. */
+export function buttonAt(rect: Rect, x: number, y: number): Button | null {
+  if (y !== rect.y + rect.h - 3) return null;
+  return buttonSpans(rect).find(b => x >= b.x - 1 && x <= b.x + b.width)?.button ?? null;
+}
 type Field = Exclude<Sort, "io"> | "read" | "written";
 function cell(p: Process, field: Field): string {
   switch (field) {
@@ -624,34 +791,46 @@ export function draw(
   const room = sat(rect.h, 19 + shift),
     count = Math.min(leaders ? leaders.length : state.count, room),
     gpu_sort = sorted === "gpu" || sorted === "gpu_memory";
-  const row = (p: Process | undefined, pid: number, y: number) => {
-    right(w, rect.x + 2, y, faint, `${pid}`, 7);
-    if (!p) return at(w, rect.x + 10, y, faint, "Sample not available", name_width);
+  const row = (p: Process | null, key: Key, y: number) => {
+    const live = !leaders && state.pinned,
+      chosen = !leaders && state.selected !== null && same(key, state.selected),
+      tagged = live && state.tagged.some(k => same(k, key)),
+      plain = chosen ? row_text : text,
+      dim = chosen ? row_faint : faint,
+      bright = chosen ? row_strong : strong;
+    if (chosen) {
+      w.write(`\x1b[${y + 1};${rect.x + 2}H${row_text}`);
+      w.splat(" ", rect.w - 2);
+    }
+    right(w, rect.x + 2, y, dim, `${key.pid}`, 7);
+    if (tagged) at(w, rect.x + 9, y, chosen ? row_tag : tag, "•", 1);
+    if (!p) return at(w, rect.x + 10, y, dim, state.pinned ? "exited" : "Sample not available", name_width);
     const name = `${p.provider ? adapter(p.provider).glyph + " " : ""}${p.name}`,
       devices: number[] = (p.gpu_devices ?? []).map(d => d.index);
-    at(w, rect.x + 10, y, text, name, name_width);
+    at(w, rect.x + 10, y, tagged ? (chosen ? row_tag : tag) : plain, name, name_width);
     // Sorted by a GPU figure, each process says which devices it was on.
     if (gpu_sort && devices.length)
       at(
         w,
         rect.x + 11 + displayWidth(name),
         y,
-        faint,
+        dim,
         `gpu ${devicesText(devices)}`,
         sat(name_width, displayWidth(name) + 1),
       );
     for (const c of table)
-      right(w, rect.x + rect.w - c.x, y, sorted === c.sort ? strong : text, cell(p, c.field), c.width);
+      right(w, rect.x + rect.w - c.x, y, sorted === c.sort ? bright : plain, cell(p, c.field), c.width);
   };
-  if (leaders) leaders.slice(0, count).forEach((p, i) => row(p, p.pid, header + 1 + i));
-  else
-    state.order.slice(0, count).forEach((key, i) =>
-      row(
-        work.processes.find((item: Process) => item.pid === key.pid && String(item.start) === key.start),
-        key.pid,
-        header + 1 + i,
-      ),
-    );
+  if (leaders) leaders.slice(0, count).forEach((p, i) => row(p, keyOf(p), header + 1 + i));
+  else {
+    const first = state.pinned ? Math.min(state.offset, sat(state.count, count)) : 0;
+    state.order.slice(first, first + count).forEach((key, i) => row(find(work.processes, key), key, header + 1 + i));
+  }
+  if (state.pinned) {
+    pinnedFooter(w, rect, work.processes, state);
+    w.write("\x1b[0m\x1b8\x1b[?25l");
+    return;
+  }
   const legend = Provider.all
     .map(adapter)
     .map(a => `${a.glyph} ${a.label}`)
@@ -668,4 +847,57 @@ export function draw(
     rect.w - 4,
   );
   w.write("\x1b[0m\x1b8\x1b[?25l");
+}
+
+/** What a signal would go to, named for the bar. */
+function targetsText(processes: Process[], state: State): string {
+  const keys = state.targets();
+  if (keys.length !== 1) return `${keys.length} tagged processes`;
+  const p = find(processes, keys[0]);
+  if (!p) return `${keys[0].pid}`;
+  const name = `${p.provider ? adapter(p.provider).glyph + " " : ""}${p.name} (${p.pid})`;
+  return p.provider ? `${name}, the pane's agent` : name;
+}
+/** The pinned card's bar: the selected process and where it runs, with the
+ * buttons for it; or a signal waiting to be confirmed; or what one did. Under
+ * it, the keys. */
+function pinnedFooter(w: Writer, rect: Rect, processes: Process[], state: State): void {
+  const y = rect.y + rect.h - 3,
+    x = rect.x + 2,
+    width = rect.w - 4;
+  w.write(`\x1b[${y + 1};${x}H${bar}`);
+  w.splat(" ", width + 2);
+  if (state.confirm) {
+    const kill = state.confirm === "kill",
+      ask = `${kill ? "Kill" : "Stop"} ${targetsText(processes, state)} with ${kill ? "SIGKILL" : "SIGTERM"}?`;
+    at(w, x, y, kill ? bar_hot : bar_warm, ask, width);
+    const again = `${kill ? "k" : "t"} again`,
+      tail = displayWidth(ask) + 1;
+    at(w, x + tail, y, bar_key, again, sat(width, tail));
+    at(w, x + tail + displayWidth(again), y, bar_faint, " · esc", sat(width, tail + displayWidth(again)));
+  } else {
+    const spans = buttonSpans(rect),
+      left = spans.at(-1)!.x - 2 - x,
+      selected = find(processes, state.selected);
+    if (state.notice) at(w, x, y, bar, state.notice, left);
+    else if (state.tagged.length) at(w, x, y, bar, `${state.tagged.length} tagged`, left);
+    else if (selected) {
+      const name = `${selected.provider ? adapter(selected.provider).glyph + " " : ""}${selected.name}`;
+      at(w, x, y, bar, name, left);
+      at(
+        w,
+        x + displayWidth(name),
+        y,
+        bar_faint,
+        ` · ${state.place ?? "background session"}`,
+        sat(left, displayWidth(name)),
+      );
+    }
+    for (const b of spans) {
+      const off = b.button === "go" && (!selected || state.place === null);
+      at(w, b.x, y, off ? bar_off : bar_key, b.key, 1);
+      at(w, b.x + 2, y, off ? bar_off : bar_faint, b.label, b.label.length);
+    }
+  }
+  at(w, x, rect.y + rect.h - 2, faint, "↑↓ select  ←→ sort  space tag  c tag tree  u untag  esc close", width);
 }

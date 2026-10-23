@@ -39,6 +39,25 @@ Hover the workspace's resource row for CPU, memory and disk history plus a
 process table. Click a metric's header to sort. **Corgi setup → Resources**
 turns readings on or off; sampling stops when no viewer displays them.
 
+Click a process, press an arrow over the card, or press prefix `R` (`corgi
+action resources`) to hold the card open for the keyboard. Its rows then stay
+put: new processes join at the foot, and ended ones read "exited". The bar
+under the table says where the selected process runs.
+
+| Key | Does |
+| --- | --- |
+| `↑` `↓` | Select a process |
+| `←` `→` | Sort by another column |
+| `Enter` | Go to the pane it runs in |
+| `t` / `k` | SIGTERM / SIGKILL, once pressed again to confirm |
+| `space` | Tag it, or untag it, and move down |
+| `c` | Tag it and the processes it started |
+| `u` | Untag all |
+| `Esc` | Cancel a signal, or close the card |
+
+As in htop, a signal goes to the tagged processes, or else to the selected
+one, and never to a whole process group.
+
 CPU uses one core as 100%, so a workspace can exceed 100%. Memory is summed
 physical footprint on macOS or RSS on Linux; shared mappings may overlap.
 Disk rates cover attributed disk traffic, not network traffic. Missing metrics

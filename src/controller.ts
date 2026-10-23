@@ -66,6 +66,7 @@ import * as linkThumbnail from "./link_thumbnail";
 import * as paneImages from "./pane_images";
 import * as tabIcons from "./tab_icons";
 import * as resourceTooltip from "./resource_tooltip";
+import type { Signal } from "./trackers/resources";
 import * as worktreeTooltip from "./worktree_tooltip";
 import * as worktreeAgents from "./worktree_agents";
 import * as worktreeRemoval from "./worktree_removal";
@@ -1140,6 +1141,7 @@ export class Controller {
   private hasMenu(): boolean {
     return (
       this.worktree_card.pinned ||
+      this.resource_card.pinned ||
       this.moonlander !== null ||
       this.onboarding !== null ||
       this.prefix ||
@@ -1508,6 +1510,7 @@ export class Controller {
     this.closeMoonlander();
     this.leaveSidebar();
     this.worktree_card.clear();
+    this.resource_card.release();
     this.help_visible = false;
     this.link_tooltip.cancel();
     this.agent_picker = null;
@@ -1771,6 +1774,72 @@ export class Controller {
         this.link_tooltip.cancel();
         this.dirty = true;
         break;
+      case "resources": {
+        const id = Number(act.value) || this.current().id,
+          card = this.resource_card;
+        if (this.runtime.workspaces.index(id) === null) break;
+        if (!this.prefs.resources.enabled) {
+          this.notice(" Resource readings are off: turn them on in Corgi setup → Resources");
+          break;
+        }
+        this.closeMenu();
+        if (card.workspace !== id) Object.assign(card, { workspace: id, order: [], count: 0, sort: "cpu", anchor: 3 });
+        card.pin();
+        this.dirty = true;
+        break;
+      }
+      case "resource-next":
+      case "resource-prev":
+      case "resource-sort":
+      case "resource-tag":
+      case "resource-tag-tree":
+      case "resource-untag":
+      case "resource-go":
+      case "resource-signal":
+      case "resource-close": {
+        const card = this.resource_card;
+        if (!card.pinned) break;
+        this.dirty = true;
+        switch (act.name) {
+          case "resource-next":
+          case "resource-prev":
+            card.move(act.name === "resource-next" ? 1 : -1);
+            break;
+          case "resource-sort":
+            card.step(act.value === "right");
+            break;
+          case "resource-tag":
+            card.toggle();
+            break;
+          case "resource-tag-tree":
+            card.tagTree(this.resourceProcesses());
+            break;
+          case "resource-untag":
+            card.untag();
+            break;
+          case "resource-go": {
+            const pane = this.selectedProcess()?.pane ?? null;
+            if (pane === null || !this.pane(pane)) {
+              card.notice = "It runs in a background session, outside any pane";
+              break;
+            }
+            this.closeMenu();
+            this.focusPane(pane);
+            break;
+          }
+          case "resource-signal":
+            if (act.value === "term" || act.value === "kill") await this.signalProcesses(act.value);
+            break;
+          case "resource-close":
+            if (card.confirm) card.confirm = null;
+            else {
+              card.release();
+              this.link_tooltip.cancel();
+            }
+            break;
+        }
+        break;
+      }
       case "worktree-next":
       case "worktree-prev": {
         if (this.worktreeDetail() === null) break;
@@ -3465,6 +3534,11 @@ export class Controller {
         return;
       }
     }
+    if (this.resource_card.pinned) {
+      const act = this.resourceKey(String.fromCharCode(byte));
+      if (act) await this.perform(act);
+      return;
+    }
     if (byte === 27 && this.paste_card !== null) return this.closePasteCard();
     if (this.onboarding) {
       const wizard = this.onboarding;
@@ -4137,8 +4211,13 @@ export class Controller {
       if (rest[0] !== 27) {
         this.closePasteCard();
         this.pinWorktreeInput(String.fromCharCode(rest[0]));
+        const opened = this.pinResourceInput(String.fromCharCode(rest[0]));
         this.link_tooltip.cancel();
         this.dirty = true;
+        if (opened) {
+          used += 1;
+          continue;
+        }
         if (cl.paste !== null) await this.pasteByte(cl.paste, rest[0]);
         else await this.key(rest[0]);
         used += 1;
@@ -4177,8 +4256,13 @@ export class Controller {
       if (!latin1(seq).startsWith("\x1b[<")) {
         this.endSigninExit();
         this.pinWorktreeInput(latin1(seq));
+        const opened = this.pinResourceInput(latin1(seq));
         this.link_tooltip.cancel();
         this.dirty = true;
+        if (opened) {
+          used += len;
+          continue;
+        }
       }
       if (cl.paste === null) {
         const key_event = keyboard.decode(latin1(seq));
@@ -4294,6 +4378,9 @@ export class Controller {
         if (parsed_key === "up") await this.perform({ name: "worktree-prev" });
         else if (parsed_key === "down") await this.perform({ name: "worktree-next" });
         else if (parsed_key === "delete") await this.perform({ name: "worktree-remove" });
+      } else if (this.resource_card.pinned) {
+        const act = this.resourceKey(text);
+        if (act) await this.perform(act);
       } else if (this.onboarding) {
         const wizard = this.onboarding;
         let done = false;
@@ -4589,13 +4676,18 @@ export class Controller {
         !release && (button === 0 || button === 2) && this.sidebarView([]).hit(x, y).tag === "workspace";
       if (!resource_workspace_press) {
         this.pointer = { x, y };
-        if (!release && button === 0) this.resource_card.click(resource_rect, x, y);
+        if (!release && button === 0) await this.clickResource(resource_rect, x, y);
+        else if (button === 35) this.hoverResource(resource_rect, x, y);
+        else if (!release && (button === 64 || button === 65) && this.resource_card.pinned)
+          await this.perform({ name: button === 65 ? "resource-next" : "resource-prev" });
         else if (release) this.ui_mouse_down = false;
         else if ((button & 64) !== 0) this.link_tooltip.cancel();
         this.dirty = true;
         return;
       }
     }
+    if (this.resource_card.pinned && !release && (button === 0 || button === 2)) this.resource_card.release();
+    else if (!this.resource_card.pinned) this.resource_card.selected = null;
     this.moveHover(button, x, y, release);
     if (!release && button === 35) this.pollMenuHover();
     if (cl.port_click) {
@@ -5563,6 +5655,118 @@ export class Controller {
       ws && this.runtime.inference.uses.worktrees ? new Map(ws.worktree_briefs.map(b => [b.path, b])) : null;
     return this.worktree_card;
   }
+  /** A press on the resource card: a bar button, a row to select, or a heading to sort by. */
+  private async clickResource(rect: Rect, x: number, y: number): Promise<void> {
+    const card = this.resource_card,
+      button = card.pinned ? resourceTooltip.buttonAt(rect, x, y) : null,
+      row = resourceTooltip.rowAt(rect, x, y, card.gpus),
+      key = row === null ? null : card.order[(card.pinned ? card.offset : 0) + row];
+    if (button === "go") return this.perform({ name: "resource-go" });
+    if (button) return this.perform({ name: "resource-signal", value: button });
+    if (key) card.pin(key);
+    else card.click(rect, x, y);
+  }
+  /** The row under the pointer is selected, pinned or not. */
+  private hoverResource(rect: Rect, x: number, y: number): void {
+    const card = this.resource_card,
+      row = resourceTooltip.rowAt(rect, x, y, card.gpus),
+      key = row === null ? null : card.order[(card.pinned ? card.offset : 0) + row];
+    if (key) card.selected = key;
+  }
+  /** An arrow or Enter over the hovered resource card holds it open for the
+   * keyboard. Without a hovered row it selects the top one and takes the key. */
+  private pinResourceInput(input: string): boolean {
+    const card = this.resource_card;
+    if (card.pinned || this.resourceDetail() === null) return false;
+    const key = keys.parse(input),
+      event = keyboard.decode(input);
+    if (
+      input !== "\r" &&
+      key !== "up" &&
+      key !== "down" &&
+      !(event && [13, keyboard.arrow_up, keyboard.arrow_down].includes(event.codepoint))
+    )
+      return false;
+    const hovered = card.chosen();
+    card.pin();
+    return !hovered;
+  }
+  /** The pinned resource card's keys: htop's, where it has them. */
+  private resourceKey(input: string): Action | null {
+    switch (input.length === 1 ? input : keys.parse(input)) {
+      case "\x1b":
+        return { name: "resource-close" };
+      case "\r":
+        return { name: "resource-go" };
+      case " ":
+        return { name: "resource-tag" };
+      case "c":
+        return { name: "resource-tag-tree" };
+      case "u":
+        return { name: "resource-untag" };
+      case "t":
+        return { name: "resource-signal", value: "term" };
+      case "k":
+        return { name: "resource-signal", value: "kill" };
+      case "\x0e":
+      case "down":
+        return { name: "resource-next" };
+      case "\x10":
+      case "up":
+        return { name: "resource-prev" };
+      case "left":
+        return { name: "resource-sort", value: "left" };
+      case "right":
+        return { name: "resource-sort", value: "right" };
+    }
+    return null;
+  }
+  private resourceProcesses(): resourceTooltip.Process[] {
+    const id = this.resource_card.workspace;
+    return this.runtime.resources.workspaces.find(w => w.id === id)?.processes ?? [];
+  }
+  private selectedProcess(): resourceTooltip.Process | null {
+    return resourceTooltip.find(this.resourceProcesses(), this.resource_card.selected);
+  }
+  /** Where a process runs, as its workspace and tab; null in a background session. */
+  private processPlace(p: resourceTooltip.Process | null): string | null {
+    const pane = p?.pane ?? null,
+      ws = pane === null ? null : this.runtime.workspaces.owner(pane),
+      tab = ws?.model.tabForPane(pane!) ?? null;
+    if (!ws || tab === null) return null;
+    return `${ws.name} › ${ws.model.tabs[tab].title || `tab ${tab + 1}`}`;
+  }
+  /** Sends the pinned card's signal to its targets, once its key comes twice. */
+  private async signalProcesses(signal: Signal): Promise<void> {
+    const card = this.resource_card,
+      targets = card.targets();
+    if (card.workspace === null || !targets.length) return;
+    if (card.confirm !== signal) {
+      card.confirm = signal;
+      card.notice = "";
+      return;
+    }
+    card.confirm = null;
+    const names = targets.map(k => resourceTooltip.find(this.resourceProcesses(), k)?.name ?? `${k.pid}`);
+    let gone = 0;
+    for (const k of targets)
+      try {
+        await call(this.connection, "process.signal", {
+          workspace: card.workspace,
+          pid: k.pid,
+          start: BigInt(k.start),
+          signal,
+        });
+      } catch (error) {
+        if (!errors.is(error, "NoProcess")) throw error;
+        gone++;
+      }
+    card.tagged = [];
+    const what = targets.length === 1 ? names[0] : `${targets.length} processes`,
+      sent = `Sent ${signal === "kill" ? "SIGKILL" : "SIGTERM"} to ${what}`;
+    card.notice =
+      gone === targets.length ? `${what} already exited` : gone ? `${sent}; ${gone} had already exited` : sent;
+  }
   private pinWorktreeInput(input: string): void {
     if (this.worktreeDetail() === null) return;
     const key = keys.parse(input),
@@ -5737,6 +5941,9 @@ export class Controller {
     return badge !== null && worktreeTooltip.between(rect, badge, x, y);
   }
   resourceDetail(): number | null {
+    const pinned = this.resource_card.pinned ? this.resource_card.workspace : null;
+    if (this.prefs.resources.enabled && pinned !== null && this.runtime.workspaces.index(pinned) !== null)
+      return pinned;
     if (!this.prefs.resources.enabled || !this.link_tooltip.shown || this.link_tooltip.target === null) return null;
     const id = this.link_tooltip.target.resource ?? null;
     if (id === null) return null;
@@ -6016,12 +6223,18 @@ export class Controller {
     const detail = this.resourceDetail();
     if (detail !== null) {
       const rect = this.resourceRect();
-      const freeze = this.pointer !== null && rect !== null && rect.contains(this.pointer.x, this.pointer.y);
+      const freeze =
+        this.resource_card.pinned ||
+        (this.pointer !== null && rect !== null && rect.contains(this.pointer.x, this.pointer.y));
       this.resource_card.update(
         sidebar.resourcesFor(this.runtime.resources, detail) as any,
         freeze,
         resourceTooltip.gpuCount(this.runtime.resources),
       );
+      if (this.resource_card.pinned && rect) {
+        this.resource_card.reveal(resourceTooltip.rows(rect, this.resource_card.gpus));
+        this.resource_card.place = this.processPlace(this.selectedProcess());
+      }
     }
     const card = this.paste_card;
     const focused = this.focused();
@@ -6047,7 +6260,7 @@ export class Controller {
         link_card,
         resources: this.runtime.resources,
         resource_hover: this.link_tooltip.target?.resource ?? null,
-        resource_card: tooltip_ready && detail !== null ? this.resource_card : null,
+        resource_card: (tooltip_ready || this.resource_card.pinned) && detail !== null ? this.resource_card : null,
         git_hover: this.hoverIdle() ? this.git_hover : null,
         worktree_card: this.worktreeCard(),
         worktree_spotlight: this.spotlight(),

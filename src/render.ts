@@ -636,8 +636,9 @@ export function frame(view: LayoutView, panes: Pane[], width: number, height: nu
   };
   const link_rect = u.link_card ? linkTooltip.geometry(width, height, u.link_card.link, u.link_card.thumbnail) : null;
   const on_link_card = u.pointer !== null && link_rect !== null && link_rect.contains(u.pointer.x, u.pointer.y);
+  const pinned = u.resource_card?.pinned ?? false;
   const card_rect =
-    !u.link_tooltip || u.agent_launcher !== null || u.corgi_setup !== null || u.pointer === null
+    (!pinned && (!u.link_tooltip || u.pointer === null)) || u.agent_launcher !== null || u.corgi_setup !== null
       ? null
       : u.resource_card
         ? resourceTooltip.geometry(width, height, side.width, u.resource_card.anchor, u.resource_card.gpus)
@@ -654,7 +655,11 @@ export function frame(view: LayoutView, panes: Pane[], width: number, height: nu
     if (on_link_card) {
       link_pointer = linkTooltip.copyAt(link_rect!, pointer.x, pointer.y);
     } else if (on_card) {
-      link_pointer = resourceTooltip.sortAt(card_rect!, pointer.x, pointer.y, u.resource_card!.gpus) !== null;
+      const gpus = u.resource_card!.gpus;
+      link_pointer =
+        resourceTooltip.sortAt(card_rect!, pointer.x, pointer.y, gpus) !== null ||
+        (resourceTooltip.rowAt(card_rect!, pointer.x, pointer.y, gpus) ?? Infinity) < u.resource_card!.count ||
+        (pinned && resourceTooltip.buttonAt(card_rect!, pointer.x, pointer.y) !== null);
     } else if (u.scope_menu !== null) {
       link_pointer =
         side.hit(pointer.x, pointer.y).tag === "agent_scope" ||
@@ -866,6 +871,10 @@ export function frame(view: LayoutView, panes: Pane[], width: number, height: nu
         if (u.pointer && worktreeTooltip.sortAt(rect, u.pointer.x, u.pointer.y) !== null) link_pointer = true;
       } else cover(writeChip(w, "Worktrees: enlarge terminal · Esc to close", width, height, u.pointer));
     }
+  } else if (pinned && card_rect) {
+    const name = u.workspaces.find(ws => ws.id === u.resource_card!.workspace)?.name ?? "workspace";
+    resourceTooltip.draw(w, card_rect, name, u.resources, u.resource_card!, u.pointer);
+    cover(card_rect);
   } else if (u.link_tooltip && !u.link_card && u.agent_launcher === null && u.corgi_setup === null && u.pointer) {
     const pointer = u.pointer;
     if (u.resource_card) {

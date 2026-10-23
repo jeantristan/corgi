@@ -11,6 +11,7 @@ import {
   leaders,
   record,
   standouts,
+  signal,
   history_bucket_ms,
   history_capacity,
   type Point,
@@ -143,6 +144,8 @@ test("ownership chooses the nearest root and bounds ancestry cycles", () => {
         workspace: 1,
         agent_pid: 0,
         provider: null,
+        pane: null,
+        session: null,
       },
       {
         key: 0,
@@ -151,6 +154,8 @@ test("ownership chooses the nearest root and bounds ancestry cycles", () => {
         workspace: 2,
         agent_pid: 0,
         provider: null,
+        pane: null,
+        session: null,
       },
     ];
   expect(owner(12, inventory, index, roots)?.workspace).toBe(2);
@@ -200,7 +205,9 @@ test("workspace GPU figures come from the source and stay shown through a pause"
   Object.assign(tracker, {
     gpu: sampler,
     workspaces: [1, 2],
-    roots: [{ key: 0, pid: process.pid, start: null, workspace: 1, agent_pid: 0, provider: null }],
+    roots: [
+      { key: 0, pid: process.pid, start: null, workspace: 1, agent_pid: 0, provider: null, pane: 1, session: null },
+    ],
   });
   tracker.sample(1000);
   let view = tracker.pending.view;
@@ -213,7 +220,12 @@ test("workspace GPU figures come from the source and stay shown through a pause"
     ],
     "process",
   ]);
-  expect(work.processes.find(p => p.pid === process.pid)?.gpu).toBe(60);
+  expect(work.processes.find(p => p.pid === process.pid)).toMatchObject({
+    gpu: 60,
+    parent: process.ppid,
+    pane: 1,
+    session: null,
+  });
   expect(work.history.at(-1)?.gpus).toEqual(work.gpu_devices);
   expect(view.workspace(2)).toMatchObject({ gpu: 0, gpu_memory: 0n, gpu_shown: false });
   expect(view.gpus.map(g => g.index)).toEqual([0, 1]);
@@ -293,4 +305,23 @@ test("history points keep the processes leading each figure and each device", ()
     second: Point = { ...first, at: 1000, processes: [proc(1, { cpu: 20, memory: 3n, read: 0n, written: 2n })] };
   const [merged] = record([first], second);
   expect(merged.processes[0]).toMatchObject({ cpu: 30, memory: 9n, read: 2n, written: 1n });
+});
+
+test("a signal reaches only a process the snapshot shows, and only while it is that process", async () => {
+  const child = Bun.spawn(["sleep", "30"]),
+    start = native.counters(child.pid)!.start,
+    view = new Snapshot(),
+    work = new Work(1);
+  work.processes.push(new Process(child.pid, start, "sleep"));
+  view.workspaces.push(work);
+  try {
+    expect(() => signal(view, 2, child.pid, start, "term")).toThrow("NoProcess");
+    expect(() => signal(view, 1, child.pid, start + 1n, "term")).toThrow("NoProcess");
+    expect(() => signal(view, 1, process.pid, start, "term")).toThrow("NoProcess");
+    signal(view, 1, child.pid, start, "term");
+    expect(await child.exited).not.toBe(0);
+    expect(child.signalCode).toBe("SIGTERM");
+  } finally {
+    child.kill();
+  }
 });
