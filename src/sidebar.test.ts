@@ -48,6 +48,7 @@ import {
   type Entry,
   type WorkspaceEntry,
   type Hit,
+  drawGitTooltip,
 } from "./sidebar";
 
 const selected_bg = palette.bg("selected");
@@ -1320,4 +1321,33 @@ test("on a host with GPUs every resource row keeps a GPU place, used or not", ()
   expect(wide).toContain("CPU 182%");
   expect(wide).toContain("Mem 3.0G");
   expect(wide).toContain("GPU 150%");
+});
+
+test("the push popover shows what the push and each commit change", () => {
+  const none = { files: 0, insertions: 0, deletions: 0 };
+  const commit = (subject: string, diff: typeof none) => ({
+    hash: "abc1234",
+    subject,
+    author: "A",
+    date: "2026-10-23 10:00",
+    timestamp: 0,
+    diff,
+  });
+  const ws = workspaceEntry({
+    id: 1,
+    name: "w",
+    cwd: "/tmp",
+    active: true,
+    git_ahead: 2,
+    git_commits: [commit("Grow", { files: 1, insertions: 1, deletions: 0 }), commit("Empty", none)],
+  });
+  let w = new Writer();
+  drawGitTooltip(w, { ...ws, git_diff: { files: 3, insertions: 120, deletions: 4 } }, 100, 30, 0, 0);
+  let text = hostText(w.s);
+  expect(text).toMatch(/↑ 2 unpushed commits +3 files {2}\+120 −4 │/);
+  expect(text).toMatch(/abc1234 {2}Grow +│ *\n.*A · 2026-10-23 10:00 · +1 file {5}\+1 −0 │/);
+  expect(text).toMatch(/abc1234 {2}Empty +│ *\n.*A · 2026-10-23 10:00 · +│/);
+  w = new Writer();
+  drawGitTooltip(w, { ...ws, git_commits: [commit("Grow", none)] }, 100, 30, 0, 0);
+  expect(hostText(w.s)).not.toContain("file");
 });

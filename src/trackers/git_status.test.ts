@@ -2,7 +2,7 @@ import { test, expect } from "bun:test";
 import { mkdtemp, rm, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Tracker, clean, parseCommits, Commits } from "./git_status";
+import { Tracker, clean, parseCommits, parseShortstat, Commits } from "./git_status";
 import { Store, Workspace } from "../workspace";
 import { Ref } from "./git_push";
 import { execFile } from "node:child_process";
@@ -86,7 +86,7 @@ test("clearing a push failure notifies viewers even when git status is unchanged
   expect(workspace.git_push.view()).toEqual({ phase: "idle", message: "" });
 });
 test("commit metadata strips terminal controls and preserves Unicode", () => {
-  const c = parseCommits("abc\0Person\x1b\0date\x00123\0fix 项目\x07\0");
+  const c = parseCommits("\x1eabc\0Person\x1b\0date\x00123\0fix 项目\x07");
   expect(c.len).toBe(1);
   expect(c.items[0].author.text()).toBe("Person ");
   expect(c.items[0].subject.text()).toBe("fix 项目 ");
@@ -138,6 +138,45 @@ test("an unchanged repository reuses its answer until its refs move", async () =
     const again = [...t.cache.values()][0];
     expect(await t.refresh(repo, 70000)).toBe(1n);
     expect(again.checked).toBe(70000);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("shortstats count files and lines, with either count left out", () => {
+  expect(parseShortstat(" 3 files changed, 12 insertions(+), 1 deletion(-)")).toEqual({
+    files: 3,
+    insertions: 12,
+    deletions: 1,
+  });
+  expect(parseShortstat(" 1 file changed, 2 deletions(-)")).toEqual({ files: 1, insertions: 0, deletions: 2 });
+  expect(parseShortstat("")).toEqual({ files: 0, insertions: 0, deletions: 0 });
+});
+test("unpushed commits carry their diffs and the one a push would send", async () => {
+  const root = await mkdtemp(join(tmpdir(), "corgi-git-"));
+  try {
+    await git(root, "init", "-b", "main");
+    await git(root, "config", "user.email", "test@example.com");
+    await git(root, "config", "user.name", "Test");
+    await git(root, "commit", "--allow-empty", "-m", "base");
+    await git(root, "branch", "upstream");
+    await git(root, "branch", "--set-upstream-to=upstream");
+    await Bun.write(join(root, "a.txt"), "one\ntwo\n");
+    await Bun.write(join(root, "b.txt"), "three\n");
+    await git(root, "add", ".");
+    await git(root, "commit", "-m", "add");
+    await Bun.write(join(root, "a.txt"), "one\n");
+    await git(root, "commit", "-am", "trim");
+    await git(root, "commit", "--allow-empty", "-m", "empty");
+    const t = new Tracker(),
+      { commits } = await t.refreshInto(root, 1000);
+    expect(commits.diff).toEqual({ files: 2, insertions: 2, deletions: 0 });
+    expect(commits.items.slice(0, commits.len).map(c => [c.subject.text(), c.diff])).toEqual([
+      ["empty", { files: 0, insertions: 0, deletions: 0 }],
+      ["trim", { files: 1, insertions: 0, deletions: 1 }],
+      ["add", { files: 2, insertions: 3, deletions: 0 }],
+    ]);
+    t.close();
   } finally {
     await rm(root, { recursive: true, force: true });
   }

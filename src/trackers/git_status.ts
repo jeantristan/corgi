@@ -5,16 +5,25 @@ import { dirname, join } from "node:path";
 import { Ref, State } from "./git_push";
 import { Text } from "../providers";
 import type { Store } from "../workspace";
+/** Files and lines changed, from `git --shortstat`. */
+export class Diffstat {
+  files = 0;
+  insertions = 0;
+  deletions = 0;
+}
 export class Commit {
   hash = new Text();
   subject = new Text();
   author = new Text();
   timestamp = 0;
   date = new Text();
+  diff = new Diffstat();
 }
 export class Commits {
   items: Commit[] = Array.from({ length: 12 }, () => new Commit());
   len = 0;
+  /** What a push would change. */
+  diff = new Diffstat();
 }
 export function clean(source: string, capacity = source.length * 4) {
   let out = "";
@@ -29,20 +38,35 @@ export function clean(source: string, capacity = source.length * 4) {
 export function cleaned(capacity: number, source: string) {
   return new Text(clean(source, capacity));
 }
+export function parseShortstat(raw: string) {
+  const stat = /(\d+) files? changed(?:, (\d+) insertions?\(\+\))?(?:, (\d+) deletions?\(-\))?/.exec(raw),
+    out = new Diffstat();
+  out.files = Number(stat?.[1] ?? 0);
+  out.insertions = Number(stat?.[2] ?? 0);
+  out.deletions = Number(stat?.[3] ?? 0);
+  return out;
+}
+/** Parses `git log` with `log_format` and `--shortstat`: a record per
+ * commit, its fields on the first line and its stat after. */
 export function parseCommits(raw: string) {
-  const out = new Commits(),
-    fields = raw.split("\0");
-  for (let i = 0; i + 4 < fields.length && out.len < 12; i += 5) {
+  const out = new Commits();
+  for (const record of raw.split("\x1e")) {
+    if (out.len >= 12) break;
+    const newline = record.indexOf("\n"),
+      fields = (newline < 0 ? record : record.slice(0, newline)).split("\0");
+    if (fields.length < 5) continue;
     const c = new Commit();
-    c.hash = cleaned(12, fields[i].replace(/^[\r\n]+|[\r\n]+$/g, ""));
-    c.author = cleaned(80, fields[i + 1]);
-    c.date = cleaned(16, fields[i + 2]);
-    c.timestamp = /^-?\d+$/.test(fields[i + 3]) ? Number(fields[i + 3]) : 0;
-    c.subject = cleaned(240, fields[i + 4]);
+    c.hash = cleaned(12, fields[0].replace(/^[\r\n]+|[\r\n]+$/g, ""));
+    c.author = cleaned(80, fields[1]);
+    c.date = cleaned(16, fields[2]);
+    c.timestamp = /^-?\d+$/.test(fields[3]) ? Number(fields[3]) : 0;
+    c.subject = cleaned(240, fields[4]);
+    if (newline >= 0) c.diff = parseShortstat(record.slice(newline));
     out.items[out.len++] = c;
   }
   return out;
 }
+const log_format = "--format=%x1e%h%x00%an%x00%ad%x00%at%x00%s";
 type Job = {
   id: number;
   cwd: string;
@@ -243,12 +267,15 @@ export class Tracker {
         "--no-decorate",
         "--encoding=UTF-8",
         "--date=format:%Y-%m-%d %H:%M",
-        "--format=%h%x00%an%x00%ad%x00%at%x00%s%x00",
+        log_format,
+        "--shortstat",
         "-12",
         fingerprint,
         "--",
       ]);
       if (output !== null) result.commits = parseCommits(output);
+      const stat = await command(root, ["diff", "--shortstat", "--no-ext-diff", fingerprint, "--"]);
+      if (stat !== null) result.commits.diff = parseShortstat(stat);
     }
     return result;
   }

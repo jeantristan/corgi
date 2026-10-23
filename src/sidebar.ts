@@ -269,6 +269,13 @@ export interface GitCommit {
   author: string;
   date: string;
   timestamp: number;
+  diff: GitDiff;
+}
+/** Files and lines a push would change. */
+export interface GitDiff {
+  files: number;
+  insertions: number;
+  deletions: number;
 }
 export interface Stats {
   tools: number;
@@ -328,6 +335,7 @@ export interface WorkspaceEntry {
   git_push: GitPush;
   git_ahead: number | null;
   git_commits: GitCommit[];
+  git_diff: GitDiff;
   worktrees: worktrees.Snapshot | null;
   id: number;
   name: string;
@@ -349,6 +357,7 @@ export function workspaceEntry(
     git_push: { phase: "idle", message: "" },
     git_ahead: null,
     git_commits: [],
+    git_diff: { files: 0, insertions: 0, deletions: 0 },
     worktrees: null,
     agents: 0,
     working: 0,
@@ -1921,6 +1930,42 @@ export function drawGitAction(w: Writer, v: View, workspaces: WorkspaceEntry[], 
     return;
   }
 }
+/** Diffstats as a table, "12 files  +120  −4", its columns sized to fit every row. */
+class DiffColumns {
+  files = 0;
+  added = 0;
+  removed = 0;
+  constructor(diffs: GitDiff[]) {
+    for (const diff of diffs) {
+      if (diff.files === 0) continue;
+      this.files = Math.max(this.files, displayWidth(compactCount(diff.files)));
+      this.added = Math.max(this.added, 1 + displayWidth(compactCount(diff.insertions)));
+      this.removed = Math.max(this.removed, 1 + displayWidth(compactCount(diff.deletions)));
+    }
+  }
+  /** The table's width, or 0 when nothing changed or it needs more than `room`. */
+  width(room: number): number {
+    if (this.files === 0) return 0;
+    const size = this.files + " files  ".length + this.added + 1 + this.removed;
+    return size <= room ? size : 0;
+  }
+  /** Writes a row ending at the box's content edge: column `x` (0-based) of row `y` (1-based). */
+  write(w: Writer, diff: GitDiff, x: number, y: number): void {
+    if (diff.files === 0) return;
+    const pad = (text: string, size: number) => " ".repeat(Math.max(0, size - displayWidth(text))) + text;
+    w.write(
+      `\x1b[22m\x1b[${y};${x}H` +
+        fg("muted") +
+        pad(compactCount(diff.files), this.files) +
+        (diff.files === 1 ? " file   " : " files  ") +
+        fg("accent") +
+        pad(`+${compactCount(diff.insertions)}`, this.added) +
+        " " +
+        fg("hot") +
+        pad(`−${compactCount(diff.deletions)}`, this.removed),
+    );
+  }
+}
 function drawGitError(w: Writer, message: string, cols: number, rows: number, px: number, py: number): Rect {
   const width = Math.min(76, cols);
   const room = width - 4;
@@ -1985,15 +2030,24 @@ export function drawGitTooltip(
     w.write((row === 0 || row === height - 1 ? "─" : " ").repeat(width - 2));
     w.write(row === 0 ? "╮" : row === height - 1 ? "╯" : "│");
   }
+  const columns = new DiffColumns([ws.git_diff, ...ws.git_commits.slice(0, count).map(item => item.diff)]);
+  const header = columns.width(width - 16);
   w.write(`\x1b[${y + 2};${x + 3}H\x1b[1m` + fg("strong"));
-  writeEllipsis(w, `↑ ${ws.git_ahead ?? 0} unpushed commit${ws.git_ahead === 1 ? "" : "s"}`, width - 4);
+  writeEllipsis(
+    w,
+    `↑ ${ws.git_ahead ?? 0} unpushed commit${ws.git_ahead === 1 ? "" : "s"}`,
+    width - 4 - (header > 0 ? header + 2 : 0),
+  );
+  if (header > 0) columns.write(w, ws.git_diff, x + width - 1 - header, y + 2);
   ws.git_commits.slice(0, count).forEach((item, i) => {
     w.write(`\x1b[${y + 3 + i * 2};${x + 3}H${base}` + fg("muted") + `${item.hash}  ` + fg("text"));
     writeEllipsis(w, item.subject, sat(width - 6, byteLength(item.hash)));
-    w.write(`\x1b[${y + 4 + i * 2};${x + 5}H` + fg("faint"));
     const age = relativeTime(item.timestamp, Math.floor(Date.now() / 1000));
     const timing = `${item.date} · ${age}`;
-    const author_room = Math.min(24, sat(width - 9, displayWidth(timing)));
+    const stat = item.diff.files > 0 ? columns.width(sat(width - 8, displayWidth(timing) + 2)) : 0;
+    if (stat > 0) columns.write(w, item.diff, x + width - 1 - stat, y + 4 + i * 2);
+    w.write(`\x1b[${y + 4 + i * 2};${x + 5}H` + fg("faint"));
+    const author_room = Math.min(24, sat(width - 9 - (stat > 0 ? stat + 2 : 0), displayWidth(timing)));
     if (author_room > 0) {
       writeEllipsis(w, item.author, author_room);
       w.write(" · ");

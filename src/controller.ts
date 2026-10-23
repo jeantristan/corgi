@@ -838,6 +838,7 @@ export class Controller {
         git_ahead: ws.git_ahead,
         git_push: ws.git_push,
         git_commits: ws.git_commits,
+        git_diff: ws.git_diff,
         worktrees: ws.worktrees,
         stats: ws.stats,
       });

@@ -621,6 +621,12 @@ $.snapshot.workspaces[].git_commits[].hash: string
 $.snapshot.workspaces[].git_commits[].subject: string
 $.snapshot.workspaces[].git_commits[].author: string
 $.snapshot.workspaces[].git_commits[].date: string
+$.snapshot.workspaces[].git_commits[].diff.files: usize
+$.snapshot.workspaces[].git_commits[].diff.insertions: usize
+$.snapshot.workspaces[].git_commits[].diff.deletions: usize
+$.snapshot.workspaces[].git_diff.files: usize
+$.snapshot.workspaces[].git_diff.insertions: usize
+$.snapshot.workspaces[].git_diff.deletions: usize
 $.snapshot.workspaces[].git_ahead: optional
 $.snapshot.workspaces[].git_ahead?: u64
 $.snapshot.workspaces[].worktrees: optional

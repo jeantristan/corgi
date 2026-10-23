@@ -19,6 +19,7 @@ import { type Conversation, conversation, usageView } from "./subagent_tooltip";
 import { View as UsageView } from "./usage/live";
 import * as errors from "./errors";
 import * as processName from "./process_name";
+import type { GitCommit, GitDiff } from "./sidebar";
 import {
   snapshot as worktreeSnapshot,
   removal as worktreeRemoval,
@@ -305,7 +306,8 @@ export interface Workspace {
   /** The launcher rows hidden in this workspace only. */
   launcher_hidden: Row[];
   closed_agents: number;
-  git_commits: any[];
+  git_commits: GitCommit[];
+  git_diff: GitDiff;
   git_ahead: number | null;
   worktrees: Worktrees | null;
   git_ref: any;
@@ -326,7 +328,15 @@ function workspace(value: any): Workspace {
     last_agent: value.last_agent ?? null,
     launcher_hidden: strings(value.launcher_hidden).flatMap(text => Row.parse(text) ?? []),
     closed_agents: Number(value.closed_agents ?? 0),
-    git_commits: value.git_commits ?? [],
+    git_commits: (value.git_commits ?? []).map((c: any) => ({
+      hash: c.hash ?? "",
+      subject: c.subject ?? "",
+      author: c.author ?? "",
+      date: c.date ?? "",
+      timestamp: Number(c.timestamp ?? 0),
+      diff: gitDiff(c.diff),
+    })),
+    git_diff: gitDiff(value.git_diff),
     git_ahead: value.git_ahead === null || value.git_ahead === undefined ? null : Number(value.git_ahead),
     worktrees: worktreeSnapshot(value.worktrees),
     git_ref: value.git_ref ?? {},
@@ -334,6 +344,14 @@ function workspace(value: any): Workspace {
     worktree_removal: worktreeRemoval(value.worktree_removal),
     worktree_briefs: worktreeBriefs(value.worktree_briefs),
     stats: { tools: 0, input: 0, output: 0, tokens_known: false, ...(value.stats ?? {}) },
+  };
+}
+/** A diffstat a daemon sends; one from before them sends none. */
+function gitDiff(value: any): GitDiff {
+  return {
+    files: Number(value?.files ?? 0),
+    insertions: Number(value?.insertions ?? 0),
+    deletions: Number(value?.deletions ?? 0),
   };
 }
 /** The worktree briefs a daemon sends; one from before them sends none. */
