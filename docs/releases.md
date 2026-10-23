@@ -5,7 +5,7 @@ isolated checkout. Pending edits are excluded; Git tags and remotes are untouche
 
 ## Setup
 
-Use an Apple Silicon Mac with Bun, the [pinned Zig toolchain](../AGENTS.md#zig-toolchain),
+Use an Apple Silicon Mac (or Linux, [below](#publishing-from-linux)) with Bun, the [pinned Zig toolchain](../AGENTS.md#zig-toolchain),
 Xcode's SDK and a persistent macOS signing identity. Keep signing keys and storage
 credentials outside the repository. Use one publishing host at a time.
 
@@ -38,6 +38,40 @@ Honor the `no-cache` headers on `channels/*` and `install.sh`.
 Optional `notaryProfile` enables notarization. Optional `sentry` supplies `dsn`,
 `org` and `project`; publishing then needs an authenticated `sentry-cli` to upload
 debug symbols. Configuration fields live in [scripts/release.ts](../scripts/release.ts).
+
+### Publishing from Linux
+
+[rcodesign](https://github.com/indygreg/apple-platform-rs) signs and notarizes
+the macOS binary without a Mac. Install it (`cargo install apple-codesign`),
+plus `zip` and LLVM's `dsymutil` and `llvm-dwarfdump` (a versioned copy such as
+`dsymutil-18` is found too). Copy Xcode's macOS SDK to `.tools/macos-sdk`, or
+name it with `macosSdk`.
+
+On the Mac that publishes, `scripts/send-release-keys.sh` sends the release
+config and keys to the Linux host, with the `codesignIdentity` certificate and
+its private key as a `.p12`. To notarize too, pass it an App Store Connect API
+key with the Developer role (`--notary-key AuthKey_KEY_ID.p8 --issuer
+ISSUER_ID`); notarizing needs a Developer ID Application certificate.
+
+By hand, export the certificate with its private key from Keychain Access as a
+`.p12` and encode the API key:
+
+```sh
+rcodesign encode-app-store-connect-api-key -o ~/.config/corgi/notary-key.json ISSUER_ID KEY_ID AuthKey_KEY_ID.p8
+```
+
+Then replace `codesignIdentity` and `notaryProfile` with the following, and make
+all three files private with `chmod 600`:
+
+```json
+  "codesignP12": "/home/you/.config/corgi/codesign.p12",
+  "codesignP12PasswordFile": "/home/you/.config/corgi/codesign.pass",
+  "notaryApiKey": "/home/you/.config/corgi/notary-key.json"
+```
+
+rcodesign refuses certificates Apple did not issue. A Linux publisher runs
+only the Linux binary's smoke test; the macOS binary is checked by its
+signature (and Apple's notarization), not run.
 
 ## Release checklist
 

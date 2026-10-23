@@ -15,6 +15,8 @@ import {
   releaseEnvironment,
   macosSdk,
   validateBinary,
+  signCommands,
+  debugTools,
   type Store,
 } from "../scripts/release.ts";
 import { mkdtemp, mkdir, readFile, writeFile, chmod, rm, stat, symlink } from "node:fs/promises";
@@ -298,6 +300,52 @@ test("isolated builds reuse a local compiler with a separate local cache", () =>
   expect(releaseEnvironment("/repo", "/isolated", { PATH: "/nonexistent" }).ZIG).toBe(
     `/repo/.tools/zig-${host}-0.16.0/zig`,
   );
+});
+
+test("rcodesign signs for notarization and verifies, like codesign on a Mac", () => {
+  const rcodesign = { tool: "rcodesign", p12: "/keys/id.p12", passwordFile: "/keys/id.pass", notarize: true } as const;
+  const [sign, verify] = signCommands(rcodesign, "/out/corgi", { identifier: "dev.corgi.cli", entitlements: true });
+  expect(sign.slice(0, 7)).toEqual([
+    "rcodesign",
+    "sign",
+    "--p12-file",
+    "/keys/id.p12",
+    "--p12-password-file",
+    "/keys/id.pass",
+    "--for-notarization",
+  ]);
+  expect(sign.slice(7, 10)).toEqual(["--binary-identifier", "dev.corgi.cli", "--entitlements-xml-file"]);
+  expect(sign[10]).toEndWith("scripts/entitlements.plist");
+  expect(sign[11]).toBe("/out/corgi");
+  expect(verify).toEqual(["rcodesign", "verify", "/out/corgi"]);
+  const [library] = signCommands(rcodesign, "/out/lib.dylib");
+  expect(library).not.toContain("--entitlements-xml-file");
+  expect(library).not.toContain("--binary-identifier");
+  // Without notarization any Apple certificate signs, still under the hardened runtime.
+  const [development] = signCommands({ ...rcodesign, notarize: false }, "/out/corgi");
+  expect(development).not.toContain("--for-notarization");
+  expect(development.slice(6, 8)).toEqual(["--code-signature-flags", "runtime"]);
+  const [mac, check] = signCommands({ tool: "codesign", identity: "ABC" }, "/out/corgi");
+  expect(mac.slice(0, 4)).toEqual(["/usr/bin/codesign", "--force", "--sign", "ABC"]);
+  expect(check).toEqual(["/usr/bin/codesign", "--verify", "--strict", "/out/corgi"]);
+});
+
+test("dSYM tools come from Xcode on a Mac, else the newest LLVM on PATH", async () => {
+  expect(debugTools("darwin", "")?.dsymutil).toEqual(["xcrun", "dsymutil"]);
+  const dir = await mkdtemp(join(tmpdir(), "corgi-llvm-test-"));
+  try {
+    expect(debugTools("linux", dir)).toBeNull();
+    for (const name of ["dsymutil-15", "dsymutil-18", "llvm-dwarfdump-18", "dsymutil-18.bak"]) {
+      await writeFile(join(dir, name), "#!/bin/sh\n");
+      await chmod(join(dir, name), 0o755);
+    }
+    expect(debugTools("linux", dir)).toEqual({
+      dsymutil: [join(dir, "dsymutil-18")],
+      dwarfdump: [join(dir, "llvm-dwarfdump-18")],
+    });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 test("macOS builds use the configured SDK, else the copy in .tools", async () => {

@@ -2,7 +2,7 @@
 import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, sign } from "node:crypto";
 import { mkdir, mkdtemp, readFile, writeFile, rm, stat, realpath } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 
 const repo = resolve(import.meta.dir, "..");
@@ -163,20 +163,29 @@ type Config = {
   region: string;
   bucket: string;
   signingKey: string;
-  codesignIdentity: string;
+  codesignIdentity?: string;
+  // A Developer ID certificate and key exported from the keychain, which
+  // rcodesign signs with on any platform.
+  codesignP12?: string;
+  codesignP12PasswordFile?: string;
   notaryProfile?: string;
+  // An App Store Connect API key from `rcodesign encode-app-store-connect-api-key`.
+  notaryApiKey?: string;
   macosSdk?: string;
   credentialsFile?: string;
   sentry?: SentryConfig;
 };
 // Release builds send crash reports to this Sentry project, which gets their debug files.
 type SentryConfig = { dsn: string; org: string; project: string };
+export async function privateFile(path: string, what: string) {
+  const info = await stat(path);
+  if (!info.isFile() || info.mode & 0o077) throw new Error(`${what} must be private; run chmod 600 on it.`);
+}
 export async function loadCredentials(config: Pick<Config, "credentialsFile">, env = process.env) {
   let accessKeyId = env.AWS_ACCESS_KEY_ID;
   let secretAccessKey = env.AWS_SECRET_ACCESS_KEY;
   if (!accessKeyId && !secretAccessKey && config.credentialsFile) {
-    const info = await stat(config.credentialsFile);
-    if (!info.isFile() || info.mode & 0o077) throw new Error("Credentials file must be private; run chmod 600 on it.");
+    await privateFile(config.credentialsFile, "Credentials file");
     let stored;
     try {
       stored = JSON.parse(await readFile(config.credentialsFile, "utf8"));
@@ -259,25 +268,74 @@ async function signingIdentity(run: (argv: string[], capture?: boolean) => Promi
   }
   throw new Error("No signing identity found. Install a Developer ID Application certificate with its private key.");
 }
+// A keychain identity on a Mac, or a certificate file rcodesign signs with anywhere.
+export type Signer =
+  { tool: "codesign"; identity: string } | { tool: "rcodesign"; p12: string; passwordFile: string; notarize: boolean };
 // Bun's JIT needs these under the hardened runtime. Native libraries are
 // signed by the same identity before Bun embeds them.
 const entitlements = join(import.meta.dir, "entitlements.plist");
-async function codesign(
-  run: (argv: string[], capture?: boolean) => Promise<string>,
-  identity: string,
-  path: string,
-  options: { identifier?: string; entitlements?: boolean } = {},
-) {
-  const args = ["/usr/bin/codesign", "--force", "--sign", identity, "--options", "runtime", "--timestamp"];
+type SignOptions = { identifier?: string; entitlements?: boolean };
+export function signCommands(signer: Signer, path: string, options: SignOptions = {}) {
+  if (signer.tool === "rcodesign") {
+    // rcodesign timestamps by default. --for-notarization also sets the
+    // hardened runtime, but refuses certificates other than Developer ID.
+    const args = ["rcodesign", "sign", "--p12-file", signer.p12, "--p12-password-file", signer.passwordFile];
+    args.push(...(signer.notarize ? ["--for-notarization"] : ["--code-signature-flags", "runtime"]));
+    if (options.identifier) args.push("--binary-identifier", options.identifier);
+    if (options.entitlements) args.push("--entitlements-xml-file", entitlements);
+    return [
+      [...args, path],
+      ["rcodesign", "verify", path],
+    ];
+  }
+  const args = ["/usr/bin/codesign", "--force", "--sign", signer.identity, "--options", "runtime", "--timestamp"];
   if (options.identifier) args.push("--identifier", options.identifier);
   if (options.entitlements) args.push("--entitlements", entitlements);
-  await run([...args, path]);
-  await run(["/usr/bin/codesign", "--verify", "--strict", path]);
+  return [
+    [...args, path],
+    ["/usr/bin/codesign", "--verify", "--strict", path],
+  ];
+}
+async function codesign(
+  run: (argv: string[], capture?: boolean) => Promise<string>,
+  signer: Signer,
+  path: string,
+  options: SignOptions = {},
+) {
+  for (const argv of signCommands(signer, path, options)) await run(argv);
+}
+// LLVM's dsymutil and dwarfdump: Xcode's on a Mac, or an installed (perhaps
+// versioned, like dsymutil-18) copy elsewhere.
+export function debugTools(platform = process.platform, path = process.env.PATH ?? "") {
+  if (platform === "darwin") return { dsymutil: ["xcrun", "dsymutil"], dwarfdump: ["xcrun", "dwarfdump"] };
+  const find = (name: string) => {
+    const found = Bun.which(name, { PATH: path });
+    if (found) return found;
+    const versioned = new RegExp(`^${name}-(\\d+)$`);
+    let best: { path: string; version: number } | undefined;
+    for (const dir of path.split(":").filter(Boolean)) {
+      let entries: string[];
+      try {
+        entries = readdirSync(dir);
+      } catch {
+        continue;
+      }
+      for (const entry of entries) {
+        const version = Number(versioned.exec(entry)?.[1]);
+        if (version && (!best || version > best.version)) best = { path: join(dir, entry), version };
+      }
+    }
+    return best?.path;
+  };
+  const dsymutil = find("dsymutil"),
+    dwarfdump = find("llvm-dwarfdump");
+  return dsymutil && dwarfdump ? { dsymutil: [dsymutil], dwarfdump: [dwarfdump] } : null;
 }
 // The native libraries' debug maps point into the build cache, which goes
 // away with the release checkout, so their debug info is kept as dSYMs.
 async function writeDsyms(
   run: (argv: string[], capture?: boolean) => Promise<string>,
+  tools: NonNullable<ReturnType<typeof debugTools>>,
   native: string,
   files: string[],
   out: string,
@@ -286,8 +344,8 @@ async function writeDsyms(
   for (const file of files) {
     const binary = join(native, file),
       dsym = join(out, file.split("/").pop()! + ".dSYM");
-    await run(["xcrun", "dsymutil", binary, "-o", dsym]);
-    const uuid = async (path: string) => (await run(["xcrun", "dwarfdump", "--uuid", path], true)).split(" ")[1];
+    await run([...tools.dsymutil, binary, "-o", dsym]);
+    const uuid = async (path: string) => (await run([...tools.dwarfdump, "--uuid", path], true)).split(" ")[1];
     if ((await uuid(binary)) !== (await uuid(dsym))) throw new Error(`The dSYM does not match ${file}.`);
   }
 }
@@ -429,7 +487,7 @@ async function main() {
   const argv = process.argv.slice(2);
   if (argv[0] === "--help") {
     console.log(
-      "Usage: ./scripts/release [VERSION] [--dry-run | --build-only | --publish-only] [--skip-tests]\n       ./scripts/release --init-key PATH\n\nBuilds macOS arm64 + Linux amd64, signs the macOS binary on a Mac, then publishes\nto an S3-compatible bucket. Config: ~/.config/corgi/release.json or CORGI_RELEASE_CONFIG.\nCredentials: private credentialsFile in config, or AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY (R2/S3).\nBuilds committed HEAD in an isolated checkout, leaving pending edits and development build outputs alone.\nOmit VERSION for UTC datetime + Git hash. --build-only does not upload, and runs on Linux too.\n--publish-only requires VERSION and resumes the saved commit without rebuilding/signing, even if HEAD has moved.\n--skip-tests builds without running the typecheck and test suites.",
+      "Usage: ./scripts/release [VERSION] [--dry-run | --build-only | --publish-only] [--skip-tests]\n       ./scripts/release --init-key PATH\n\nBuilds macOS arm64 + Linux amd64, signs the macOS binary (keychain on a Mac, or rcodesign with\ncodesignP12 anywhere), then publishes to an S3-compatible bucket. Config: ~/.config/corgi/release.json or CORGI_RELEASE_CONFIG.\nCredentials: private credentialsFile in config, or AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY (R2/S3).\nBuilds committed HEAD in an isolated checkout, leaving pending edits and development build outputs alone.\nOmit VERSION for UTC datetime + Git hash. --build-only does not upload, and runs on Linux too.\n--publish-only requires VERSION and resumes the saved commit without rebuilding/signing, even if HEAD has moved.\n--skip-tests builds without running the typecheck and test suites.",
     );
     return;
   }
@@ -469,17 +527,37 @@ async function main() {
     if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.search || parsed.hash)
       throw new Error("Use credential-free HTTPS URLs without query strings or fragments.");
   }
-  // Only a Mac can sign the macOS binary; a build-only run elsewhere leaves it ad-hoc signed.
+  // The keychain signs on a Mac; elsewhere rcodesign signs with an exported
+  // certificate, or a build-only run leaves the binary ad-hoc signed.
   const mac = process.platform === "darwin" && process.arch === "arm64";
+  const building = mode !== "--publish-only";
   if (config.codesignIdentity === "-") {
     if (mode !== "--build-only")
       throw new Error(
         "Ad-hoc signing is only allowed with --build-only. Configure a persistent macOS signing identity for publishing.",
       );
-  } else if (!mac && mode !== "--publish-only")
+  } else if (building && config.codesignP12) {
+    if (!config.codesignP12PasswordFile) throw new Error("codesignP12 needs codesignP12PasswordFile.");
+    await privateFile(config.codesignP12, "codesignP12");
+    await privateFile(config.codesignP12PasswordFile, "codesignP12PasswordFile");
+    if (!Bun.which("rcodesign"))
+      throw new Error("Install rcodesign to sign with codesignP12: cargo install apple-codesign");
+  } else if (building && !mac)
     throw new Error(
-      'Run releases on an Apple Silicon Mac (macOS signing requires it), or build-only with codesignIdentity "-".',
+      'Run releases on an Apple Silicon Mac, set codesignP12 to sign with rcodesign, or build-only with codesignIdentity "-".',
     );
+  if (building && config.codesignIdentity !== "-") {
+    if (config.notaryApiKey) {
+      await privateFile(config.notaryApiKey, "notaryApiKey");
+      if (!config.codesignP12) throw new Error("notaryApiKey notarizes with rcodesign; set codesignP12 too.");
+      if (!Bun.which("zip")) throw new Error("Install zip to notarize with notaryApiKey.");
+    } else if (config.notaryProfile && !mac)
+      throw new Error("notaryProfile is a Mac keychain profile; set notaryApiKey to notarize elsewhere.");
+  }
+  // Crash reports from published Macs are symbolicated with these dSYMs.
+  const dsymTools = debugTools();
+  if (mode === "" && !dsymTools)
+    throw new Error("Install LLVM's dsymutil and llvm-dwarfdump to keep the macOS debug symbols.");
   if (config.sentry) {
     const { dsn, org, project } = config.sentry;
     if (![dsn, org, project].every(v => typeof v === "string" && v))
@@ -527,8 +605,17 @@ async function main() {
         await runCommand([process.execPath, "test", "./tests/release.test.ts", "./tests/updates.test.ts"]);
       }
       await mkdir(out, { recursive: true });
-      const identity =
-        config.codesignIdentity === "-" ? "-" : config.codesignIdentity || (await signingIdentity(runCommand));
+      const signer: Signer | null =
+        config.codesignIdentity === "-"
+          ? null
+          : config.codesignP12
+            ? {
+                tool: "rcodesign",
+                p12: config.codesignP12,
+                passwordFile: config.codesignP12PasswordFile!,
+                notarize: !!config.notaryApiKey,
+              }
+            : { tool: "codesign", identity: config.codesignIdentity || (await signingIdentity(runCommand)) };
       const binaries: Record<string, { url: string; sha256: string; size: number }> = {};
       for (const target of targets) {
         const native = join(out, "native", target.name),
@@ -547,13 +634,13 @@ async function main() {
         if (macos) nativeArgs.push("--sysroot", macosSdk(repo, config));
         step(`Building the native layer for ${target.name}`);
         await runCommand(nativeArgs);
-        if (macos && mac) {
+        if (macos && dsymTools) {
           step("Writing dSYMs");
-          await writeDsyms(runCommand, native, files, join(out, "dsym"));
-          if (identity !== "-") {
-            step("Signing the native layer");
-            for (const file of files) await codesign(runCommand, identity, join(native, file));
-          }
+          await writeDsyms(runCommand, dsymTools, native, files, join(out, "dsym"));
+        }
+        if (macos && signer) {
+          step("Signing the native layer");
+          for (const file of files) await codesign(runCommand, signer, join(native, file));
         }
         const args = [
           process.execPath,
@@ -577,10 +664,15 @@ async function main() {
         if (config.sentry) args.push("--sentry-dsn", config.sentry.dsn);
         step(`Building corgi for ${target.name}`);
         await runCommand(args);
-        if (macos && identity !== "-") {
+        if (macos && signer) {
           step("Signing corgi");
-          await codesign(runCommand, identity, build, { identifier: "dev.corgi.cli", entitlements: true });
-          if (config.notaryProfile) {
+          await codesign(runCommand, signer, build, { identifier: "dev.corgi.cli", entitlements: true });
+          if (config.notaryApiKey) {
+            const zip = join(out, "build", target.name, "corgi.zip");
+            step("Notarizing with rcodesign (waits for Apple)");
+            await runCommand(["zip", "-j", "-X", "-q", zip, build]);
+            await runCommand(["rcodesign", "notary-submit", "--api-key-file", config.notaryApiKey, "--wait", zip]);
+          } else if (config.notaryProfile) {
             // Notarization doesn't change the binary; Gatekeeper looks the ticket up online.
             const zip = join(out, "build", target.name, "corgi.zip");
             step("Notarizing (waits for Apple)");
@@ -633,7 +725,7 @@ async function main() {
             commit,
             publicBaseUrl: config.publicBaseUrl,
             publicKey,
-            publishable: mode !== "--build-only" && identity !== "-",
+            publishable: mode !== "--build-only" && signer !== null,
             sentry: config.sentry?.dsn,
             hashes: {
               ...Object.fromEntries(targets.map(t => [`corgi-${t.name}`, binaries[t.name].sha256])),
