@@ -29,6 +29,7 @@ export const adapter: Adapter = {
     ...["/opt/homebrew/bin/pi", "/usr/local/bin/pi"].map(p => root + p),
   ],
   version: v => /^(?:[1-9]\d*)\.\d+\.\d+(?:[-+].*)?$/.test(v.trim()),
+  requires: "1.0.0 or newer",
   inspect(c) {
     const result = commandLine.inspect(c, {
       config_env: "PI_CODING_AGENT_DIR",

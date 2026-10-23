@@ -352,6 +352,8 @@ export interface Adapter extends Info {
   /** Whether a candidate's `--version` says it is this provider. Without it,
    * the first `command` on PATH is. */
   version?(stdout: string): boolean;
+  /** The versions `version` takes, as a sign-in says it: "1.0.0 or newer". */
+  requires?: string;
   accounts: Accounts;
   /** Its judge of hooks and screens, for an account ("" for the default). */
   watch(account: string): Watcher;

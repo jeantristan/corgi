@@ -56,6 +56,8 @@ export class Preview {
   pending = true;
   options = byProvider(() => new Option());
   installed = byProvider(() => true);
+  /** The version of each agent too old to count as installed, or "". */
+  outdated = byProvider(() => "");
   /** What each default account is called; "" for one that goes by its agent's name. */
   names = byProvider(() => "");
   /** The accounts besides each default, with what their option reads. */
@@ -247,6 +249,7 @@ export class Worker {
   private list(previous: Preview): Preview {
     const result = Object.assign(new Preview(), previous);
     result.installed = installed();
+    result.outdated = byProvider(p => (result.installed[p] ? "" : (discovery.outdated(p) ?? "")));
     result.names = byProvider(p => accounts.defaultName(p));
     result.accounts = accounts
       .known()
@@ -295,6 +298,8 @@ export class Worker {
     job.queued = false;
     job.accessing = job.request_access;
     job.request_access = false;
+    await discovery.check();
+    if (this.stopping) return;
     job.preview = this.list(job.preview);
     job.preview.pending = true;
     // Launchers keep a provider process each, so those of accounts gone close.

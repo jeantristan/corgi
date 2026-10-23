@@ -1,5 +1,6 @@
 import { expect, spyOn, test } from "bun:test";
 import { link, Signin } from "./signin";
+import * as discovery from "./discovery";
 import { signin as claude } from "./providers/claude/signin";
 import { signin as codex } from "./providers/codex/signin";
 
@@ -79,4 +80,30 @@ test("ctrl c closes a stopped sign-in without retrying", async () => {
   await s.input("\x03");
   expect(statuses).toEqual([1]);
   expect(retry).not.toHaveBeenCalled();
+});
+test("an agent too old to sign in to says so and makes no account", async () => {
+  const statuses: number[] = [];
+  const s = new Signin(true, false, {
+    changed() {},
+    done(status) {
+      statuses.push(status);
+    },
+  });
+  s.provider = "pi";
+  const resolve = spyOn(discovery, "resolve").mockRejectedValue(Error("ProviderTooOld")),
+    outdated = spyOn(discovery, "outdated").mockReturnValue("0.84.2"),
+    start = spyOn(s, "start").mockResolvedValue();
+  try {
+    await s.begin();
+    expect(s.stage.kind === "dialog" && s.stage.dialog.heading).toBe(
+      "Pi 0.84.2 is too old: Corgi needs Pi 1.0.0 or newer. Update it, then try again.",
+    );
+    expect(s.staged).toBeNull();
+    expect(start).not.toHaveBeenCalled();
+    await s.input("\x1b");
+    expect(statuses).toEqual([1]);
+  } finally {
+    resolve.mockRestore();
+    outdated.mockRestore();
+  }
 });

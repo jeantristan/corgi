@@ -20,6 +20,7 @@ export const adapter: Adapter = {
   },
   owns: p => ["opencode2", "opencode"].includes(basename(p)),
   version: s => /^opencode v2\./m.test(s.trim()),
+  requires: "v2",
   installs: ({ home, root }) => [
     ...(home ? [join(home, ".opencode/bin/opencode2"), join(home, ".opencode/bin/opencode")] : []),
     ...["/opt/homebrew/bin", "/usr/local/bin"].map(p => root + p + "/opencode2"),

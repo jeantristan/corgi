@@ -297,8 +297,11 @@ $.clients[].launch_preview?.preview.options.opencode2.spend_history[14].minor?: 
 $.clients[].launch_preview?.preview.options.claude.spend_history[14].earlier: bool
 $.clients[].launch_preview?.preview.options.opencode2.spend_history[14].earlier: bool
 $.clients[].launch_preview?.preview.installed.codex: bool
+$.clients[].launch_preview?.preview.outdated.codex: string
 $.clients[].launch_preview?.preview.installed.claude: bool
+$.clients[].launch_preview?.preview.outdated.claude: string
 $.clients[].launch_preview?.preview.installed.opencode2: bool
+$.clients[].launch_preview?.preview.outdated.opencode2: string
 $.clients[].launch_preview?.checked: i64
 $.clients[].launch_preview?.history_asked: bool
 $.clients[].launch_preview?.history_epoch: u64
@@ -328,3 +331,4 @@ $.clients[].headless_start: optional
 $.clients[].headless_start?.id: u32
 $.clients[].headless_start?.deadline: i64
 $.clients[].launch_preview?.preview.installed.pi: bool
+$.clients[].launch_preview?.preview.outdated.pi: string

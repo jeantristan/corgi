@@ -989,8 +989,11 @@ $.launch_preview.options.opencode2.spend_history[14].minor?: f64
 $.launch_preview.options.claude.spend_history[14].earlier: bool
 $.launch_preview.options.opencode2.spend_history[14].earlier: bool
 $.launch_preview.installed.codex: bool
+$.launch_preview.outdated.codex: string
 $.launch_preview.installed.claude: bool
+$.launch_preview.outdated.claude: string
 $.launch_preview.installed.opencode2: bool
+$.launch_preview.outdated.opencode2: string
 $.launch_history.epoch: u64
 $.launch_history.revision: u64
 $.launch_history.full: bool
@@ -1011,3 +1014,4 @@ $.requests|session.command.command|agent.visibility.hidden.pi: bool
 $.snapshot.agent_yolo.pi: bool
 $.snapshot.agent_hidden.pi: bool
 $.launch_preview.installed.pi: bool
+$.launch_preview.outdated.pi: string

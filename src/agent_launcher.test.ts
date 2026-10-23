@@ -512,6 +512,11 @@ test("an account's row reads its own account and has its own YOLO and launcher m
   m.preview.installed.claude = false;
   expect(m.shown(work)).toBe(false);
   expect(m.manageModel().agents.find(a => a.account === "/accounts/work")?.who).toBe("Not installed");
+  m.preview.installed.pi = false;
+  m.preview.outdated.pi = "0.84.2";
+  expect(m.manageModel().agents.find(a => a.provider === "pi" && !a.account)?.who).toBe(
+    "0.84.2 · needs 1.0.0 or newer",
+  );
 });
 
 test("a completed account stops reading in both screens while other rows are pending", () => {

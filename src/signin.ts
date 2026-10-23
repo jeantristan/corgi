@@ -292,6 +292,21 @@ export class Signin {
   /** Makes a new account's folder and starts the agent there, or starts it
    * in an account that has one. */
   async begin() {
+    try {
+      this.agent = await discovery.resolve(this.provider!);
+    } catch (error) {
+      return this.ask({
+        heading: unavailable(this.provider!, error),
+        lines: [],
+        choices: [
+          { label: "Try again", act: () => void this.retry() },
+          { label: "Close", act: () => this.close(1) },
+        ],
+        step: this.steps().indexOf("Sign in"),
+        esc: 1,
+      });
+    }
+    if (!this.agent.includes("/")) this.agent = Bun.which(this.agent) ?? this.agent;
     if (this.adding)
       try {
         this.staged = accounts.stage(this.provider!, this.name);
@@ -304,9 +319,13 @@ export class Signin {
           step: this.steps().indexOf("Sign in"),
         });
       }
-    this.agent = await discovery.resolve(this.provider!);
-    if (!this.agent.includes("/")) this.agent = Bun.which(this.agent) ?? this.agent;
     await this.start();
+  }
+  /** Looks for its agent again, as after installing or updating it. */
+  retry() {
+    this.stage = { kind: "signin" };
+    this.changed();
+    return this.begin();
   }
   async start() {
     // Closed before its agent came up, it starts none.
@@ -700,6 +719,18 @@ const problems: Record<string, string> = {
   InvalidAgentOptions: "Check the extra flags and environment variables.",
   AccountEnvironmentOverride: "The account's settings directory can't be overridden here.",
 };
+/** Why Corgi can't start `provider` to sign in, as a sentence. */
+function unavailable(provider: Provider, error: unknown): string {
+  const a = adapter(provider);
+  switch (errors.name(error)) {
+    case "ProviderTooOld":
+      return `${a.label} ${discovery.outdated(provider) ?? ""} is too old: Corgi needs ${a.label} ${a.requires ?? "updated"}. Update it, then try again.`;
+    case "ProviderNotFound":
+      return `Corgi couldn't find ${a.label}. Install it, then try again.`;
+    default:
+      return `${a.label} didn't start: ${errors.name(error) ?? error}`;
+  }
+}
 /** What went wrong making, naming or removing an account, as a sentence. */
 export const problem = (error: unknown) => problems[errors.name(error) ?? ""] ?? String(error);
 

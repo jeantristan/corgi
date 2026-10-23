@@ -91,6 +91,8 @@ export interface Preview {
   pending: boolean;
   options: ByProvider<Option>;
   installed: ByProvider<boolean>;
+  /** The version of each agent that is there but too old for Corgi, or "". */
+  outdated: ByProvider<string>;
   /** What each default account is called; "" for one that goes by its agent's name. */
   names: ByProvider<string>;
   accounts: AccountOption[];
@@ -100,6 +102,7 @@ export function preview(value: any = {}): Preview {
     pending: value.pending !== false,
     options: byProvider(p => option(value.options?.[p])),
     installed: byProvider(p => value.installed?.[p] !== false),
+    outdated: byProvider(p => (typeof value.outdated?.[p] === "string" ? value.outdated[p] : "")),
     names: byProvider(p => (typeof value.names?.[p] === "string" ? value.names[p] : "")),
     accounts: (Array.isArray(value.accounts) ? value.accounts : []).flatMap((a: any): AccountOption[] => {
       const provider = Provider.parse(a?.provider);
@@ -620,7 +623,9 @@ export class Menu {
         name: l.account ? (a?.name ?? "") : this.preview.names[l.provider],
         label: this.label(row),
         who: !installed
-          ? "Not installed"
+          ? this.preview.outdated[l.provider]
+            ? `${this.preview.outdated[l.provider]} · needs ${adapter(l.provider).requires ?? "an update"}`
+            : "Not installed"
           : out
             ? "Not signed in"
             : o.account || ((o.pending ?? this.preview.pending) ? "Reading…" : "Unavailable"),
