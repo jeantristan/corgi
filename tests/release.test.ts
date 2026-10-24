@@ -499,6 +499,64 @@ test("PATH setup handles shell configs, spaces, duplicates and opting out", asyn
   }
 });
 
+test("PATH setup creates a bash login file only on macOS, and only when asked", async () => {
+  const base = await mkdtemp(join(tmpdir(), "corgi login file test "));
+  // live and ask stand in for a terminal: ask prints that it ran, then answers.
+  const run = (name: string, system: string, live: string, answer = 1) => {
+    const home = join(base, name);
+    const script = testInstaller().replace(
+      /\nmain "\$@"\n$/,
+      `\nuname() { echo ${system}; }\nlive=${live}\nask() { echo asked; return ${answer}; }\nsetup_path\n`,
+    );
+    const p = Bun.spawnSync(["/bin/sh", "-c", script], {
+      env: {
+        ...process.env,
+        HOME: home,
+        SHELL: "/bin/bash",
+        PATH: "/usr/bin:/bin",
+        CORGI_INSTALL_BIN: home + "/.local/bin/corgi",
+        CORGI_UPDATE_PATH: "1",
+      },
+    });
+    expect(p.exitCode).toBe(0);
+    return { home, out: p.stdout.toString() };
+  };
+  const exists = (home: string, file: string) => Bun.file(join(home, file)).exists();
+  try {
+    const linux = run("linux", "Linux", "1", 0);
+    expect(linux.out).not.toContain("asked");
+    expect(await exists(linux.home, ".bashrc")).toBe(true);
+    for (const file of [".bash_profile", ".bash_login", ".profile"]) expect(await exists(linux.home, file)).toBe(false);
+
+    for (const [name, live] of [
+      ["offline", ""],
+      ["declined", "1"],
+    ]) {
+      const mac = run(name, "Darwin", live);
+      expect(mac.out.includes("asked")).toBe(live === "1");
+      expect(mac.out).toContain("macOS terminals skip ~/.bashrc until ~/.bash_profile loads it.");
+      expect(await exists(mac.home, ".bash_profile")).toBe(false);
+    }
+
+    const accepted = run("accepted", "Darwin", "1", 0);
+    expect(accepted.out).toContain("✓ Created ~/.bash_profile to load ~/.bashrc");
+    const login = Bun.spawnSync(["/bin/bash", "-l", "-c", 'printf "%s" "$PATH"'], {
+      env: { HOME: accepted.home, PATH: "/usr/bin:/bin" },
+    });
+    expect(login.stdout.toString().split(":")).toContain(accepted.home + "/.local/bin");
+
+    const profiled = join(base, "profiled");
+    await import("node:fs/promises").then(fs => fs.mkdir(profiled));
+    await writeFile(join(profiled, ".profile"), "# existing\n");
+    const existing = run("profiled", "Darwin", "1", 0);
+    expect(existing.out).not.toContain("asked");
+    expect(existing.out).toContain("✓ Added ~/.local/bin to PATH in ~/.bashrc and ~/.profile\n");
+    expect(await exists(profiled, ".bash_profile")).toBe(false);
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
 // A home with release 1.2.3 installed but no launcher, and the installer run from it.
 async function releaseHome(name: string) {
   const home = await mkdtemp(join(tmpdir(), `corgi ${name} test `));

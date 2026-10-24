@@ -164,6 +164,21 @@ EOF
   mv -f "$bin.new" "$bin"
 }
 
+# A yes/no question on the terminal; Enter or y says yes.
+ask() {
+  printf '  %s?%s %s %s[Y/n]%s' "$yellow" "$off" "$1" "$dim" "$off"
+  stty -icanon min 1 time 0 </dev/tty
+  while :; do
+    case $(dd bs=1 count=1 </dev/tty 2>/dev/null | od -An -tx1 | tr -d ' \n') in
+      0a|0d|59|79) reply=0; break ;;
+      1b|4e|6e|71) reply=1; break ;;
+    esac
+  done
+  stty icanon </dev/tty
+  printf '\r%s[K' "$esc"
+  return $reply
+}
+
 # Puts the default install directory on PATH for new shells.
 setup_path() {
   [ "$bin" = "$HOME/.local/bin/corgi" ] || return 0
@@ -177,16 +192,17 @@ setup_path() {
     return
   fi
   line=$path_line
-  login_rc=
+  login_rc= bash_profile=
   shell=${SHELL:-sh}
   case "${shell##*/}" in
     zsh) rc="${ZDOTDIR:-$HOME}/.zshrc" ;;
     bash)
       rc="$HOME/.bashrc"
-      login_rc="$HOME/.profile"
-      for file in "$HOME/.bash_profile" "$HOME/.bash_login"; do
+      for file in "$HOME/.bash_profile" "$HOME/.bash_login" "$HOME/.profile"; do
         if [ -f "$file" ]; then login_rc=$file; break; fi
-      done ;;
+      done
+      # macOS terminals start login shells, which skip ~/.bashrc without one of these.
+      [ -n "$login_rc" ] || [ "$(uname -s)" != Darwin ] || bash_profile=1 ;;
     fish) rc=$fish_rc line=$fish_line ;;
     *) warn "Add $(home "$dir") to PATH to run corgi by name."; return ;;
   esac
@@ -204,6 +220,14 @@ setup_path() {
     ok "Added $(home "$dir") to PATH in $files"
   else
     already "Added $(home "$dir") to PATH in $files"
+  fi
+  if [ -n "$bash_profile" ]; then
+    if [ -n "$live" ] && ask "Create ~/.bash_profile so macOS terminals load ~/.bashrc?"; then
+      printf 'if [ -f ~/.bashrc ]; then . ~/.bashrc; fi\n' >"$HOME/.bash_profile"
+      ok "Created ~/.bash_profile to load ~/.bashrc"
+    else
+      warn "macOS terminals skip ~/.bashrc until ~/.bash_profile loads it."
+    fi
   fi
   # Running fish sessions share fish_user_paths, so this terminal gets it too.
   if [ "${shell##*/}" = fish ] && [ -x "$shell" ]; then
