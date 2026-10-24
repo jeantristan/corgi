@@ -86,8 +86,9 @@ See [HACKING.md](HACKING.md) for the development workflow and architecture.
 Special thanks to our early testers for their wonderful suggestions and
 feedback: [Max Bittker](https://x.com/MaxBittker),
 [Aaron Blakeman](https://github.com/ablakeman),
-[Kai Johnson](https://github.com/sirkaiserkai) and
-[Luke Alonso](https://github.com/lukealonso).
+[Kai Johnson](https://github.com/sirkaiserkai),
+[Luke Alonso](https://github.com/lukealonso) and
+[Keith Adams](https://pebblebed.com/team/keith-adams).
 
 ## License
 
