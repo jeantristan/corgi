@@ -101,19 +101,22 @@ test("unqualified controls target oldest live viewer and pane routes reject ambi
   expect(viewerShowing(server, 1)).toBe(two);
   expect(() => targetViewer(server, 3)).toThrow("NoViewer");
 });
-test("controls remain ordered and bounded", () => {
-  const target = peer(fixture());
-  queue(target, { kind: "focus", id: 1 });
+test("controls remain ordered and bounded, and wake their viewer", () => {
+  const s = fixture(),
+    target = peer(s);
+  s.dirty = false;
+  queue(s, target, { kind: "focus", id: 1 });
   expect(target.controls[0].seq).toBe(1n);
-  for (let i = 1; i < 64; i++) queue(target, { kind: "focus", id: i });
-  expect(() => queue(target, { kind: "workspace", id: 1 })).toThrow("ViewerBusy");
+  expect(s.dirty).toBe(true);
+  for (let i = 1; i < 64; i++) queue(s, target, { kind: "focus", id: i });
+  expect(() => queue(s, target, { kind: "workspace", id: 1 })).toThrow("ViewerBusy");
 });
 test("OSC52 copy chooses most recently active interested viewer and replaces pending copy", () => {
   const s = fixture(),
     one = peer(s),
     two = peer(s, 2);
   copy(s, 1, "old");
-  queue(two, { kind: "focus", id: 3 });
+  queue(s, two, { kind: "focus", id: 3 });
   copy(s, 1, "new");
   expect(one.controls).toHaveLength(0);
   expect(two.controls.map(c => c.kind)).toEqual(["focus", "action"]);

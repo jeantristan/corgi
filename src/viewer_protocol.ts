@@ -260,12 +260,14 @@ export function viewerShowing(s: Server, pane: number) {
   if (!targets.length) throw new Error("NoViewer");
   return targets[0];
 }
-export function queue(target: Client, value: Omit<Control, "seq">) {
+/** Hands `target` a control, and wakes it if it is watched. */
+export function queue(s: Server, target: Client, value: Omit<Control, "seq">) {
   if (target.controls.length >= 64) throw new Error("ViewerBusy");
   target.controls.push({ ...value, seq: target.next_control++ });
+  s.dirty = true;
 }
-function send(cl: Client, target: Client, value: Omit<Control, "seq">) {
-  queue(target, value);
+function send(s: Server, cl: Client, target: Client, value: Omit<Control, "seq">) {
+  queue(s, target, value);
   cl.queue({ ok: true, viewer: target.viewer_id, queued: true });
 }
 export function action(s: Server, cl: Client, q: Request<"action">) {
@@ -277,17 +279,17 @@ export function action(s: Server, cl: Client, q: Request<"action">) {
     if (!isAbsolute(String(act.value))) throw new Error("InvalidExecutable");
   } else if ((act.name === "onboard" || act.name === "open") && q.pane != null) target = viewerShowing(s, q.pane);
   else target = targetViewer(s, q.viewer);
-  send(cl, target, { kind: "action", name: q.name, value: q.value ?? "" });
+  send(s, cl, target, { kind: "action", name: q.name, value: q.value ?? "" });
 }
 export function focus(s: Server, cl: Client, q: Request<"focus">) {
   const target = targetViewer(s, q.viewer);
   if (!s.runtime.pane(q.pane)) throw new Error("NoPane");
-  send(cl, target, { kind: "focus", id: q.pane });
+  send(s, cl, target, { kind: "focus", id: q.pane });
 }
 export function switchWorkspace(s: Server, cl: Client, q: Request<"workspace.switch">) {
   const target = targetViewer(s, q.viewer);
   s.runtime.getWorkspace(q.workspace);
-  send(cl, target, { kind: "workspace", id: q.workspace });
+  send(s, cl, target, { kind: "workspace", id: q.workspace });
 }
 export function copy(s: Server, pane: number, text: string) {
   let target: Client | null = null;
@@ -301,7 +303,7 @@ export function copy(s: Server, pane: number, text: string) {
       target = view;
   if (!target) return;
   target.controls = target.controls.filter(c => c.kind !== "action" || c.name !== "copy");
-  queue(target, { kind: "action", name: "copy", value: text });
+  queue(s, target, { kind: "action", name: "copy", value: text });
 }
 export function viewers(s: Server) {
   return s.clients

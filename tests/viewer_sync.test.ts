@@ -48,6 +48,8 @@ class WireViewer {
   rows: number;
   session_hash: any = null;
   resources_hash: any = null;
+  /** Whether it asks for resource readings, which wake it as they come. */
+  resources = true;
   known: any = null;
   frame: any = null;
   session: any = null;
@@ -80,6 +82,7 @@ class WireViewer {
       op: "viewer.sync",
       session_hash: this.session_hash,
       resources_hash: this.resources_hash,
+      resources: this.resources,
       interests: [
         {
           pane: this.pane,
@@ -251,6 +254,7 @@ await Bun.sleep(60000);
   async test_watch_wakes_a_viewer_only_when_something_changed() {
     const pane = await this.new(),
       viewer = await WireViewer.create(this, pane);
+    viewer.resources = false;
     await this.ready(viewer, "IDLE_SURFACE");
     const id = (await viewer.sync()).viewer;
     const watch = await JsonSocket.connect(this.path);
@@ -278,6 +282,7 @@ await Bun.sleep(60000);
   async test_watch_ignores_output_the_viewer_does_not_show() {
     const pane = await this.new(),
       viewer = await WireViewer.create(this, pane);
+    viewer.resources = false;
     await this.ready(viewer, "IDLE_SURFACE");
     const id = (await viewer.sync()).viewer;
     await this.new("while :; do echo hidden; sleep 0.05; done");
