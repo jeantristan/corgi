@@ -19,7 +19,8 @@ let fills = new Map<Brand, { layers: Layer[]; colors: string }>();
 palette.derived(() => {
   fills = new Map();
 });
-function fill(brand: Brand) {
+/** A mark's paths in the colors its tabs draw them. */
+export function fill(brand: Brand) {
   let out = fills.get(brand);
   if (!out) {
     const rgb = (hex: string) => [0, 2, 4].map(i => parseInt(hex.slice(i, i + 2), 16)) as palette.Rgb;

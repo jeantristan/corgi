@@ -144,6 +144,7 @@ h1 { margin: 0; font-size: 48px; line-height: 1.05; font-weight: 700; color: var
 .k-bg { background-color: var(--bg); } .k-surface { background-color: var(--surface); }
 .k-selected { background-color: var(--selected); } .k-line { background-color: var(--line); }
 .k-strong { background-color: var(--strong); } .k-text { background-color: var(--text); } .k-pane { background-color: var(--pane); }
+.k-accent { background-color: var(--accent); }
 .stage { justify-self: center; max-width: 100%; overflow-x: auto; margin-top: 4px; padding: 12px; background: var(--pane); border: 1px solid var(--surface); border-radius: 8px; }
 
 /* The picker sits on the page itself. */

@@ -21,6 +21,9 @@ import * as worktrees from "../src/worktrees";
 import * as bindings from "../src/bindings";
 import { TabMenu } from "../src/commands";
 import * as linkTooltip from "../src/link_tooltip";
+import * as processName from "../src/process_name";
+import * as tabIcons from "../src/tab_icons";
+import * as brandIcons from "../src/assets/brand_icons";
 import { Rect } from "../src/layout";
 import { Writer } from "../src/text";
 import { cpuText, memoryText } from "../src/trackers/resources";
@@ -63,7 +66,21 @@ const BOX = { "─": "lr", "│": "ud", "┌": "rd", "┐": "ld", "└": "ur", "
 const BRAILLE_DOTS = [[0, 0], [0, 1], [0, 2], [1, 0], [1, 1], [1, 2], [0, 3], [1, 3]];
 // Blocks run a pixel past the cell's edges, so neighbors meet without a seam.
 const SHADES = { "░": 25, "▒": 50, "▓": 75 };
+// A tab's brand mark over its two cells, each a private-use character showing
+// its half, as corgi places it: a fifth of the two cells' box smaller, from
+// the first's left edge, centered down the row.
+const MARKS = new Map();
+function markCells(brand) {
+  const cells = [0, 1].map((half) => String.fromCharCode(0xe000 + 2 * processName.brands.indexOf(brand) + half));
+  if (!MARKS.has(cells[0])) {
+    const [x, y, w, h] = brandIcons.art[brand].view, paths = tabIcons.fill(brand).layers.map((l) => `<path fill="rgb(${l.rgb})" d="${l.d}"/>`).join("");
+    const img = `url("data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="${x} ${y} ${w} ${h}">${paths}</svg>`)}")`;
+    cells.forEach((ch, half) => MARKS.set(ch, { img, size: "calc(1.6 * var(--cell)) calc(1.6 * var(--cell))", pos: `calc(${-half} * var(--cell)) calc((1.42em - 1.6 * var(--cell)) / 2)` }));
+  }
+  return cells;
+}
 function shape(ch) {
+  if (MARKS.has(ch)) return MARKS.get(ch);
   if (ch === "▌" || ch === "▐") return { img: G, size: "calc(50% + 1px) calc(100% + 2px)", pos: ch === "▌" ? "-1px center" : "calc(100% + 1px) center" };
   // Shades fill the cell with their share of the color, as Ghostty draws them.
   if (SHADES[ch]) { const c = `color-mix(in srgb, currentColor ${SHADES[ch]}%, transparent)`; return { img: `linear-gradient(${c}, ${c})`, size: "calc(100% + 2px) calc(100% + 2px)", pos: "center" }; }
@@ -1822,15 +1839,31 @@ const now = () => performance.now();
 const right = (a, b, ratio = 0.52) => ({ dir: "right", ratio, a, b }), down = (a, b, ratio = 0.5) => ({ dir: "down", ratio, a, b });
 const pane = (id) => ({ id }), named = (title, root) => ({ ...root, title });
 // corgi's tabs: Claude and Codex side by side, Release notes beside the
-// refactor, then the finished agent. moonlander splits into Claude, a
-// finished Claude and a shell.
+// refactor in a tab named for them, then the finished agent. moonlander
+// splits into Claude, a finished Claude and a shell.
 const TABS = {
-  C: [named("fixes", right(pane("C0"), pane("C1"))), named("release", right(pane("C2"), pane("C3"))), named("keybindings", pane("C4"))],
-  M: [named("game", right(pane("M0"), down(pane("M1"), pane("sh"), 0.42)))],
+  C: [right(pane("C0"), pane("C1")), named("release", right(pane("C2"), pane("C3"))), pane("C4")],
+  M: [right(pane("M0"), down(pane("M1"), pane("sh"), 0.42))],
 };
-// As corgi draws a tab: its title centered, a cell either side, ten at least.
-const tabTitle = (root, i) => root.title ?? `${i + 1}`;
-const tabWidth = (root, i) => Math.max(10, 2 + Math.min(tabTitle(root, i).length, 16));
+// As corgi draws a tab: a half cell of bar, its number on a badge, the
+// badge's half cell, then its name and a space. An untitled tab is twelve
+// wide; a renamed one fits its whole title.
+const tabWidth = (root, i) => Math.max(12, `${i + 1}`.length + 3 + (root.title ?? "").length);
+// What an untitled tab shows for its pane, as corgi does: its agent and the
+// provider's mark, the program in front of its shell and its mark, or its
+// folder.
+const AGENT_TABS = {
+  C0: ["Fix sidebar flicker", "claude"], C1: ["Audit the install script", "codex"], C2: ["Release notes", "claude"], C3: ["Refactor the viewer", "claude"],
+  C4: ["Ghostty keybindings", "codex"], M0: ["Tune the thruster physics", "claude"], M1: ["Draw the lander sprite", "claude"],
+};
+function untitledTab(S, id) {
+  const agent = AGENT_TABS[id];
+  if (agent) return { name: agent[0], brand: processName.brandOf(agent[1]) };
+  const p = S.term?.[id], command = p ? p.program : id === "sh" && S.server ? "bun run dev" : null;
+  if (command) return processName.program(command.split(/\s+/));
+  const folder = p?.ps?.[0][0] ?? "~/moonlander";
+  return { name: folder.slice(folder.lastIndexOf("/") + 1), brand: null };
+}
 function leaves(node, x, y, w, h, out = []) {
   if (node.id) { out.push({ id: node.id, x, y, w, h }); return out; }
   if (node.dir === "right") {
@@ -1845,7 +1878,16 @@ function leaves(node, x, y, w, h, out = []) {
 const agentOf = (id) => (id === "sh" ? -1 : Number(id.slice(1)));
 const LINK_TEXT = GAME_LABEL;
 const groundOf = (g, r, c) => STYLES[g[r][c][1]][1];
-const TAB_ON = style("strong", "selected", true), TAB_OFF = style("faint", "bg"), TAB_ADD = style("strong", "surface", true);
+// A tab's half blocks, badge and name: the number on the keycap's gray, lit
+// with the focus color on the active tab; a cut name's last two letters fade.
+const tabStyles = (on) => {
+  const [ground, ink] = on ? ["selected", "strong"] : ["surface", "faint"];
+  return {
+    open: style(on ? "accent" : "line", "bg"), badge: on ? style("bg", "accent", true) : style("text", "line"),
+    end: style(on ? "accent" : "line", ground), name: style(ink, ground, on), fade: [0.65, 0.35].map((n) => style(mix(ground, ink, n), ground, on)),
+  };
+};
+const TAB_OFF = tabStyles(false), TAB_ON = tabStyles(true), TAB_ADD_EDGE = style("surface", "bg"), TAB_ADD = style("strong", "surface", true);
 const EDGE_ON = style("accent", null, true), EDGE = style("line");
 const PATH = style("#9fd39a"), URL = style("#a9b1f5"), CURSOR = style(null, "text");
 const GLYPH = { ud: "│", lr: "─", dr: "┌", dl: "┐", ur: "└", ul: "┘", udr: "├", udl: "┤", dlr: "┬", ulr: "┴", udlr: "┼" };
@@ -2351,10 +2393,19 @@ function session(init = {}) {
     let c = SW;
     S.tabs[S.ws].forEach((root, i) => {
       if (S.single && i !== S.tab[S.ws]) return;
-      const text = tabTitle(root, i), w = tabWidth(root, i), pad = Math.floor((w - text.length) / 2);
-      c = put(g, 0, c, " ".repeat(pad) + text.padEnd(w - pad), i === S.tab[S.ws] ? TAB_ON : TAB_OFF);
+      const ts = i === S.tab[S.ws] ? TAB_ON : TAB_OFF, number = `${i + 1}`, w = tabWidth(root, i);
+      const ids = leaves(root, 0, 0, 90, 20).map((l) => l.id);
+      const { name, brand } = root.title != null ? { name: root.title, brand: null } : untitledTab(S, ids.includes(S.focus[S.ws]) ? S.focus[S.ws] : ids[0]);
+      const mark = brand ? markCells(brand) : [];
+      let label = name.slice(0, w - number.length - mark.length - 3);
+      const cut = label.length < name.length;
+      if (cut) label = label.trimEnd();
+      const end = number.length + 2 + mark.length + label.length;
+      [..."▐" + number + "▌", ...mark, ...label.padEnd(w - number.length - 2 - mark.length)].forEach((ch, k) => put(g, 0, c + k, ch,
+        k === 0 ? ts.open : k <= number.length ? ts.badge : k === number.length + 1 ? ts.end : cut && k >= end - 2 && k < end ? ts.fade[k - end + 2] : ts.name));
+      c += w;
     });
-    if (!S.single) put(g, 0, c, " + ", TAB_ADD);
+    if (!S.single) put(g, 0, put(g, 0, put(g, 0, c, "▐", TAB_ADD_EDGE), "+", TAB_ADD), "▌", TAB_ADD_EDGE);
     const ls = layout();
     // A slice showing one pane of two draws no outline.
     if (ls.length > 1 && !S.solo) {
@@ -3068,7 +3119,7 @@ const withCard = (at, s) => {
 };
 
 // moonlander running its dev server, in the window beside its sidebar.
-const CLEVER = { ws: "M", side: "clever34", tabs: { ...TABS, M: [named("server", pane("sh"))] }, focus: { C: "C0", M: "sh" }, server: true };
+const CLEVER = { ws: "M", side: "clever34", tabs: { ...TABS, M: [pane("sh")] }, focus: { C: "C0", M: "sh" }, server: true };
 // moonlander's link, once corgi's rows go from over it.
 const cleverLink = (g) => find(g, LINK_TEXT, { r0: WS_ROWS.C[0], r1: WS_ROWS.C[0] });
 // What's worth reading in each agent's pane, from one of its texts to
@@ -3104,7 +3155,7 @@ const FEATURES = {
   // agent in another, and its changes in the review panel, which has the
   // keyboard as Corgi gives it on opening. The rest of the sidebar and the
   // agent's pane dim.
-  reviews: { init: { ws: "M", side: "review24", idle: true, review: true, reviewKeys: true, tabs: { ...TABS, M: [named("game", pane("M0"))] } }, crop: [0, 0, 24, 124],
+  reviews: { init: { ws: "M", side: "review24", idle: true, review: true, reviewKeys: true, tabs: { ...TABS, M: [pane("M0")] } }, crop: [0, 0, 24, 124],
     // The thrusters' worktree heading and its agent's two rows, and the review panel.
     lit: (g, s) => {
       const w = F.review24[0].length, tree = find(g, "⌥", { c1: w - 1 });
@@ -3136,14 +3187,14 @@ const FEATURES = {
     } },
   // The thruster tuning's pull request, its link's card open. A phone shows
   // the pane and the card.
-  links: { init: { ws: "M", side: "clever34", rows: 15, tabs: { ...TABS, M: [named("game", pane("M0"))] }, focus: { C: "C0", M: "M0" }, pr: true },
+  links: { init: { ws: "M", side: "clever34", rows: 15, tabs: { ...TABS, M: [pane("M0")] }, focus: { C: "C0", M: "M0" }, pr: true },
     crop: [0, 0, 15, 124], phone: [SW, 56], edit: moonOnly,
     links: [{ text: PR.text, uri: PR.text }],
     rings: (g, s) => [withCard(find(g, PR.text, { c0: SW }), s)],
     lit: (g, s) => [{ r0: 1, r1: s.S.rows - 1, c0: SW, c1: COLS - 1 }] },
   // The thruster tuning's screenshot of the game, its card showing the
   // picture. A phone shows the pane and the card.
-  shots: { init: { ws: "M", side: "clever34", tabs: { ...TABS, M: [named("game", pane("M0"))] }, focus: { C: "C0", M: "M0" }, shot: true },
+  shots: { init: { ws: "M", side: "clever34", tabs: { ...TABS, M: [pane("M0")] }, focus: { C: "C0", M: "M0" }, shot: true },
     crop: [0, 0, 20, 124], phone: [SW, 56], edit: moonOnly,
     links: [{ ...SHOT, image: true }],
     rings: (g, s) => [withCard(find(g, SHOT.text, { c0: SW }), s)],
