@@ -56,13 +56,19 @@ export interface Target {
   cwd: string;
   name: string;
 }
-/** The review a ghost keeps, apart from every pane's. */
-const ghost_pane = -1;
+/** The reviews ghosts keep, apart from every pane's: the one shown and the one read next. */
+const ghost_panes = [-1, -2];
+/** A checkout shown dimmed in a scope, as opening it there would show it. */
+interface Ghost {
+  target: Target;
+  scope: Scope;
+  pick: string | null;
+}
 /** How often an open panel rereads git. */
 export const refresh_ms = 2000;
 /** Rows a long line wraps to at most. */
 const wrap_cap = 6;
-const min_width = 40;
+export const min_width = 40;
 /** Rows the diff keeps however far the file list is dragged. */
 const min_diff_rows = 5;
 /** Diffs "All files" reads at once. */
@@ -405,9 +411,10 @@ export class Panel {
     return this.target?.pane ?? null;
   }
   private target: Target | null = null;
-  /** A checkout shown dimmed in a scope, as opening it there would show it,
-   * over whatever the panel follows. */
-  private ghost: { target: Target; scope: Scope; pick: string | null } | null = null;
+  /** The ghost shown over whatever the panel follows, and the one asked for
+   * next, which takes its place once read so hovering on never shows a blank. */
+  private ghost: Ghost | null = null;
+  private next_ghost: Ghost | null = null;
   private hits: Hit[] = [];
   /** The refresh under way; another asked for meanwhile runs after it. */
   private flight: Promise<void> | null = null;
@@ -516,7 +523,7 @@ export class Panel {
   }
   /** Forgets panes that closed. */
   keep(panes: Set<number>): void {
-    for (const id of this.reviews.keys()) if (id !== ghost_pane && !panes.has(id)) this.reviews.delete(id);
+    for (const id of this.reviews.keys()) if (!ghost_panes.includes(id) && !panes.has(id)) this.reviews.delete(id);
   }
   /** Whether a ghost is shown, open or not. */
   get ghosted(): boolean {
@@ -526,21 +533,41 @@ export class Panel {
    * "commits", until called with null. Keys and clicks still reach what the
    * panel follows. */
   preview(ghost: { cwd: string; name: string; scope: Scope; pick: string | null } | null): void {
-    const was = this.ghost;
+    const same = (g: Ghost | null) =>
+      g !== null && ghost !== null && g.target.cwd === ghost.cwd && g.scope === ghost.scope && g.pick === ghost.pick;
     if (!ghost) {
-      this.ghost = null;
-      if (was) this.reviews.delete(ghost_pane);
+      this.ghost = this.next_ghost = null;
+      for (const id of ghost_panes) this.reviews.delete(id);
       return;
     }
-    if (was && was.target.cwd === ghost.cwd && was.scope === ghost.scope && was.pick === ghost.pick) return;
-    this.ghost = {
-      target: { pane: ghost_pane, cwd: ghost.cwd, name: ghost.name },
-      scope: ghost.scope,
-      pick: ghost.pick,
-    };
-    this.reviews.delete(ghost_pane);
-    Object.assign(this.review(ghost_pane), { scope: ghost.scope, pick: ghost.pick });
+    if (same(this.next_ghost)) return;
+    if (this.next_ghost) this.reviews.delete(this.next_ghost.target.pane);
+    this.next_ghost = null;
+    if (same(this.ghost)) return;
+    const pane = ghost_panes.find(id => id !== this.ghost?.target.pane)!,
+      next = { target: { pane, cwd: ghost.cwd, name: ghost.name }, scope: ghost.scope, pick: ghost.pick };
+    this.reviews.delete(pane);
+    Object.assign(this.review(pane), { scope: ghost.scope, pick: ghost.pick });
+    // The first ghost shows at once; there is nothing to keep in its place.
+    if (this.ghost) this.next_ghost = next;
+    else this.ghost = next;
     void this.refresh();
+  }
+  /** Whether a ghost has what it shows first: its listing and the diff the cursor starts on. */
+  private settled(g: Ghost): boolean {
+    const root = this.roots.get(g.target.cwd);
+    if (root === undefined) return false;
+    const co = root ? this.checkouts.get(root) : null;
+    if (co === undefined || (co && !co.read)) return false;
+    if (!co || co.error) return true;
+    const followed = this.target;
+    this.target = g.target;
+    try {
+      const now = this.current();
+      return now !== null && (now.changes.length === 0 || now.file !== null || now.change?.generated === true);
+    } finally {
+      this.target = followed;
+    }
   }
   /** Reviews the followed pane in `scope`, on commit `pick` for "commits". */
   showScope(scope: Scope, pick: string | null): void {
@@ -610,7 +637,7 @@ export class Panel {
     }
     const before = this.signature();
     this.flight = this.read(this.open ? this.target : null)
-      .then(() => this.read(this.ghost?.target ?? null))
+      .then(() => this.read((this.next_ghost ?? this.ghost)?.target ?? null))
       .finally(() => {
         this.flight = null;
         // A poll that found nothing new leaves the viewer asleep.
@@ -624,7 +651,7 @@ export class Panel {
   }
   /** What a refresh can change on screen, to tell whether one did. */
   private signature(): string {
-    return this.signatureOf(this.target) + "\n" + this.signatureOf(this.ghost?.target ?? null);
+    return [this.target, this.ghost?.target, this.next_ghost?.target].map(t => this.signatureOf(t ?? null)).join("\n");
   }
   private signatureOf(t: Target | null): string {
     if (!t) return "";
@@ -1578,7 +1605,6 @@ export class Panel {
 
   /** Draws the panel; `focused` while it has the keyboard. */
   draw(w: Writer, x: number, y: number, width: number, height: number, focused: boolean): void {
-    if (this.ghost) return this.drawGhost(w, x, y, width, height);
     const c = new Canvas(x, y, width, height),
       colors = palette.colors,
       keys = this.keysOpen,
@@ -1594,9 +1620,14 @@ export class Panel {
     this.hits = inner.hits;
     this.drawCommitMenu(w, x, y, width, height);
   }
-  /** The ghost in the panel's place: dimmed past a dashed edge, with nothing
-   * to click, and what the followed review last drew kept for it. */
-  private drawGhost(w: Writer, x: number, y: number, width: number, height: number): void {
+  /** The ghost, over the panel or the panes: dimmed past a dashed edge, with
+   * nothing to click, and what the followed review last drew kept for it. */
+  drawGhost(w: Writer, x: number, y: number, width: number, height: number): void {
+    if (this.next_ghost && this.settled(this.next_ghost)) {
+      this.reviews.delete(this.ghost!.target.pane);
+      [this.ghost, this.next_ghost] = [this.next_ghost, null];
+    }
+    if (!this.ghost) return;
     const followed = this.target,
       kept = [this.split, this.commits_chip, this.menu, this.page, this.compose_at] as const;
     this.target = this.ghost!.target;

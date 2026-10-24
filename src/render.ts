@@ -201,7 +201,7 @@ export interface Ui {
   review_keys: boolean;
   /** Draws the review panel over its columns. */
   review_draw: ((w: Writer) => void) | null;
-  /** A review shown dimmed over the panes' right columns while the panel is closed. */
+  /** A review shown dimmed at the right edge, over the panel or the panes. */
   review_ghost: { width: number; draw: (w: Writer) => void } | null;
   /** Draws an account's sign-in over the whole screen, its cursor included. */
   signin_draw: ((w: Writer, pointer: Pointer | null) => linkTooltip.Link | null) | null;
@@ -824,10 +824,6 @@ export function frame(view: LayoutView, panes: Pane[], width: number, height: nu
   side.draw(w, entries, workspaces);
   if (u.git_hover !== null) sidebar.drawGitAction(w, side, u.workspaces, u.git_hover);
   if (u.review_draw) u.review_draw(w);
-  if (u.review_ghost) {
-    u.review_ghost.draw(w);
-    cover(new Rect(width - u.review_ghost.width, 0, u.review_ghost.width, height));
-  }
   if (u.corgi_badge === "image") {
     w.write(corgiBadge.hide);
     if (side.width > 0 && !badgeCovered(u, side, width, height)) w.write(corgiBadge.place());
@@ -930,6 +926,11 @@ export function frame(view: LayoutView, panes: Pane[], width: number, height: nu
           cover(subagentTooltip.draw(w, u.conversations, agent, width, height, pointer.x, pointer.y, u.accounts));
       }
     }
+  }
+  // Over the push card it previews, so the card's rows stay where they were.
+  if (u.review_ghost) {
+    u.review_ghost.draw(w);
+    cover(new Rect(width - u.review_ghost.width, 0, u.review_ghost.width, height));
   }
   if (u.copy_feedback && width >= 27 && height >= 5) {
     cover(new Rect(width - 27, 1, 27, 3));

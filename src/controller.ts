@@ -6429,10 +6429,7 @@ export class Controller {
     }
     const review_width = this.sidebarView([]).panel,
       review_focused = this.keyboard === "review" && review_width > 0,
-      ghost_width =
-        this.review.ghosted && review_width === 0
-          ? panel.Panel.fit(this.prefs.review_width, this.width - this.sidebarView([]).width)
-          : 0;
+      ghost_width = this.review.ghosted ? review_width || this.ghostWidth(git_ws) : 0;
     return render.frame(
       this.layoutView(),
       this.runtime.panes,
@@ -6537,12 +6534,19 @@ export class Controller {
           ghost_width > 0
             ? {
                 width: ghost_width,
-                draw: (w: Writer) => this.review.draw(w, this.width - ghost_width, 0, ghost_width, this.height, false),
+                draw: (w: Writer) => this.review.drawGhost(w, this.width - ghost_width, 0, ghost_width, this.height),
               }
             : null,
         signin_draw: this.signin ? (w: Writer, pointer: render.Pointer | null) => this.drawSignin(w, pointer) : null,
       }),
     );
+  }
+  /** A ghost's columns while the panel is closed: what is left right of the
+   * push card, at least the panel's narrowest and at most its width. */
+  private ghostWidth(ws: sidebar.WorkspaceEntry | null): number {
+    const most = panel.Panel.fit(this.prefs.review_width, this.width - this.sidebarView([]).width),
+      rect = ws ? this.gitRect(ws) : null;
+    return rect ? Math.min(most, Math.max(panel.min_width, this.width - rect.x - rect.w)) : most;
   }
   /** The review panel's columns, or 0 while it is closed or can't fit beside panes. */
   private reviewWidth(sidebar_width: number): number {

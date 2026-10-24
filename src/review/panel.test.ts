@@ -554,20 +554,37 @@ test("the note box edits like a text box: words, lines, selection and paste", as
   p.hide();
 });
 
+/** The ghost as a terminal shows it, row by row. */
+function ghostScreen(p: panel.Panel, width = 70, height = 34): string[] {
+  const w = new Writer(),
+    terminal = new Terminal(width, height);
+  try {
+    p.drawGhost(w, 0, 0, width, height);
+    terminal.feed(w.buffered());
+    return terminal.text().split("\n");
+  } finally {
+    terminal.destroy();
+  }
+}
 test("a ghost shows another scope dimmed and leaves the followed review alone", async () => {
   const p = new panel.Panel();
   const hash = run("rev-parse", "--short", "HEAD").trim();
   // Closed, a ghost still reads and draws its checkout.
   p.preview({ cwd: root, name: "w", scope: "commits", pick: hash });
   await settle(p);
-  let rows = screen(p);
+  let rows = ghostScreen(p);
   expect(rows.slice(0, 34).every(row => row.startsWith("┆"))).toBe(true);
   expect(rows[1]).toContain(`${hash}  docs: more notes`);
+  // The next ghost takes its place only once read, never through a blank.
+  p.preview({ cwd: root, name: "w", scope: "all", pick: null });
+  expect(ghostScreen(p)[1]).toContain(`${hash}  docs: more notes`);
+  await settle(p);
+  expect(ghostScreen(p)[1]).toContain("topic vs main");
   p.follow({ pane: 3, cwd: root, name: "Fix app" });
   p.show();
   await settle(p);
-  expect(screen(p)[1]).toContain(`${hash}  docs: more notes`);
   p.preview(null);
+  expect(p.ghosted).toBe(false);
   rows = screen(p);
   expect(rows[0].startsWith("│")).toBe(true);
   expect(rows[1]).toContain("topic vs main");
