@@ -56,6 +56,8 @@ export interface Target {
   cwd: string;
   name: string;
 }
+/** The review a ghost keeps, apart from every pane's. */
+const ghost_pane = -1;
 /** How often an open panel rereads git. */
 export const refresh_ms = 2000;
 /** Rows a long line wraps to at most. */
@@ -403,6 +405,9 @@ export class Panel {
     return this.target?.pane ?? null;
   }
   private target: Target | null = null;
+  /** A checkout shown dimmed in a scope, as opening it there would show it,
+   * over whatever the panel follows. */
+  private ghost: { target: Target; scope: Scope; pick: string | null } | null = null;
   private hits: Hit[] = [];
   /** The refresh under way; another asked for meanwhile runs after it. */
   private flight: Promise<void> | null = null;
@@ -511,7 +516,40 @@ export class Panel {
   }
   /** Forgets panes that closed. */
   keep(panes: Set<number>): void {
-    for (const id of this.reviews.keys()) if (!panes.has(id)) this.reviews.delete(id);
+    for (const id of this.reviews.keys()) if (id !== ghost_pane && !panes.has(id)) this.reviews.delete(id);
+  }
+  /** Whether a ghost is shown, open or not. */
+  get ghosted(): boolean {
+    return this.ghost !== null;
+  }
+  /** Shows the checkout at `cwd` dimmed in `scope`, on commit `pick` for
+   * "commits", until called with null. Keys and clicks still reach what the
+   * panel follows. */
+  preview(ghost: { cwd: string; name: string; scope: Scope; pick: string | null } | null): void {
+    const was = this.ghost;
+    if (!ghost) {
+      this.ghost = null;
+      if (was) this.reviews.delete(ghost_pane);
+      return;
+    }
+    if (was && was.target.cwd === ghost.cwd && was.scope === ghost.scope && was.pick === ghost.pick) return;
+    this.ghost = {
+      target: { pane: ghost_pane, cwd: ghost.cwd, name: ghost.name },
+      scope: ghost.scope,
+      pick: ghost.pick,
+    };
+    this.reviews.delete(ghost_pane);
+    Object.assign(this.review(ghost_pane), { scope: ghost.scope, pick: ghost.pick });
+    void this.refresh();
+  }
+  /** Reviews the followed pane in `scope`, on commit `pick` for "commits". */
+  showScope(scope: Scope, pick: string | null): void {
+    const t = this.target;
+    if (!t) return;
+    const r = this.review(t.pane);
+    r.picker = null;
+    if (pick) r.pick = pick;
+    this.setScope(r, scope);
   }
   /** The panel's width, or 0 when it can't sit beside the panes. */
   static fit(preferred: number, room: number): number {
@@ -571,20 +609,24 @@ export class Panel {
       return this.flight;
     }
     const before = this.signature();
-    this.flight = this.read().finally(() => {
-      this.flight = null;
-      // A poll that found nothing new leaves the viewer asleep.
-      if (this.signature() !== before) this.changed();
-      if (this.again) {
-        this.again = false;
-        void this.refresh();
-      }
-    });
+    this.flight = this.read(this.open ? this.target : null)
+      .then(() => this.read(this.ghost?.target ?? null))
+      .finally(() => {
+        this.flight = null;
+        // A poll that found nothing new leaves the viewer asleep.
+        if (this.signature() !== before) this.changed();
+        if (this.again) {
+          this.again = false;
+          void this.refresh();
+        }
+      });
     return this.flight;
   }
   /** What a refresh can change on screen, to tell whether one did. */
   private signature(): string {
-    const t = this.target;
+    return this.signatureOf(this.target) + "\n" + this.signatureOf(this.ghost?.target ?? null);
+  }
+  private signatureOf(t: Target | null): string {
     if (!t) return "";
     const root = this.roots.get(t.cwd);
     const co = root ? this.checkouts.get(root) : undefined;
@@ -608,9 +650,8 @@ export class Panel {
       this.loads,
     ]);
   }
-  private async read(): Promise<void> {
-    const t = this.target;
-    if (!t || !this.open) return;
+  private async read(t: Target | null): Promise<void> {
+    if (!t) return;
     let root = this.roots.get(t.cwd);
     if (root === undefined) {
       root = await git.toplevel(t.cwd);
@@ -626,6 +667,9 @@ export class Panel {
     try {
       [co.head, co.branch, co.base] = await Promise.all([git.head(root), git.branch(root), git.base(root)]);
       co.commits = await git.commits(root, co.base);
+      // A pick from elsewhere may name its commit short.
+      const picked = r.pick && co.commits.find(cm => cm.hash.startsWith(r.pick!));
+      if (picked) r.pick = picked.hash;
       const source = this.source(co, r);
       if (source) {
         const listed = await list(root, source);
@@ -1534,6 +1578,7 @@ export class Panel {
 
   /** Draws the panel; `focused` while it has the keyboard. */
   draw(w: Writer, x: number, y: number, width: number, height: number, focused: boolean): void {
+    if (this.ghost) return this.drawGhost(w, x, y, width, height);
     const c = new Canvas(x, y, width, height),
       colors = palette.colors,
       keys = this.keysOpen,
@@ -1548,6 +1593,27 @@ export class Panel {
     c.flush(w);
     this.hits = inner.hits;
     this.drawCommitMenu(w, x, y, width, height);
+  }
+  /** The ghost in the panel's place: dimmed past a dashed edge, with nothing
+   * to click, and what the followed review last drew kept for it. */
+  private drawGhost(w: Writer, x: number, y: number, width: number, height: number): void {
+    const followed = this.target,
+      kept = [this.split, this.commits_chip, this.menu, this.page, this.compose_at] as const;
+    this.target = this.ghost!.target;
+    try {
+      const c = new Canvas(x, y, width, height),
+        inner = new Canvas(x + 1, y, width - 1, height);
+      this.drawInside(inner, false);
+      inner.fade();
+      for (let row = 0; row < height; row++) {
+        c.put(0, row, "┆", palette.colors.faint, null);
+        for (let col = 0; col < width - 1; col++) c.cells[row][col + 1] = inner.cells[row][col];
+      }
+      c.flush(w);
+    } finally {
+      this.target = followed;
+      [this.split, this.commits_chip, this.menu, this.page, this.compose_at] = kept;
+    }
   }
   /** The branch's commits in Corgi's dropdown, hanging from the commits chip:
    * the reviewed one ticked, those already on the base dimmed, and what each

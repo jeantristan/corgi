@@ -553,3 +553,28 @@ test("the note box edits like a text box: words, lines, selection and paste", as
   expect(p.typing).toBe(false);
   p.hide();
 });
+
+test("a ghost shows another scope dimmed and leaves the followed review alone", async () => {
+  const p = new panel.Panel();
+  const hash = run("rev-parse", "--short", "HEAD").trim();
+  // Closed, a ghost still reads and draws its checkout.
+  p.preview({ cwd: root, name: "w", scope: "commits", pick: hash });
+  await settle(p);
+  let rows = screen(p);
+  expect(rows.slice(0, 34).every(row => row.startsWith("┆"))).toBe(true);
+  expect(rows[1]).toContain(`${hash}  docs: more notes`);
+  p.follow({ pane: 3, cwd: root, name: "Fix app" });
+  p.show();
+  await settle(p);
+  expect(screen(p)[1]).toContain(`${hash}  docs: more notes`);
+  p.preview(null);
+  rows = screen(p);
+  expect(rows[0].startsWith("│")).toBe(true);
+  expect(rows[1]).toContain("topic vs main");
+  // Opened from elsewhere, a short hash names the full commit.
+  p.showScope("commits", hash);
+  await settle(p);
+  expect(screen(p)[1]).toContain(`${hash}  docs: more notes`);
+  expect(p.review(3).pick).toHaveLength(40);
+  p.hide();
+});

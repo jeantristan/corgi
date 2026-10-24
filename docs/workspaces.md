@@ -68,6 +68,14 @@ Attribution follows pane/headless-session processes and descendants. Brief,
 detached, remote or container processes may escape it. Partial readings are
 estimates; resource collection does not call a model.
 
+## Push commits
+
+A workspace with commits its upstream lacks shows `↑` and their count; click
+it to push. Hover it for the unpushed commits. Hovering the card's heading
+shows the review panel dimmed on **all**, and hovering a commit shows it on
+that commit. A click opens that review; so does Enter, after an arrow holds
+the card open for the keyboard (`↑` `↓` select, `Esc` closes it).
+
 ## Create or choose a worktree
 
 In the [agent picker](agent-launcher.md), press `w` and type in **Branch** to

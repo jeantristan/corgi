@@ -66,6 +66,7 @@ import * as linkThumbnail from "./link_thumbnail";
 import * as paneImages from "./pane_images";
 import * as tabIcons from "./tab_icons";
 import * as resourceTooltip from "./resource_tooltip";
+import * as gitTooltip from "./git_tooltip";
 import type { Signal } from "./trackers/resources";
 import * as worktreeTooltip from "./worktree_tooltip";
 import * as worktreeAgents from "./worktree_agents";
@@ -318,6 +319,8 @@ export class Controller {
   });
   tab_icons = new tabIcons.Icons();
   git_hover: number | null = null;
+  git_card = new gitTooltip.State();
+  git_aim: gitTooltip.Aim | null = null;
   worktree_card = new worktreeTooltip.State();
   /** The worktree the overview selects once the removed one is gone. */
   private removal_next: string | null = null;
@@ -1143,6 +1146,7 @@ export class Controller {
     return (
       this.worktree_card.pinned ||
       this.resource_card.pinned ||
+      this.git_card.pinned ||
       this.moonlander !== null ||
       this.onboarding !== null ||
       this.prefix ||
@@ -1512,6 +1516,7 @@ export class Controller {
     this.leaveSidebar();
     this.worktree_card.clear();
     this.resource_card.release();
+    this.git_card.release();
     this.help_visible = false;
     this.link_tooltip.cancel();
     this.agent_picker = null;
@@ -1839,6 +1844,21 @@ export class Controller {
             }
             break;
         }
+        break;
+      }
+      case "git-next":
+      case "git-prev":
+      case "git-go":
+      case "git-close": {
+        const card = this.git_card,
+          ws = this.gitWorkspace();
+        if (!card.pinned || !ws) break;
+        this.dirty = true;
+        if (act.name === "git-go") await this.reviewPush(ws, card.selected ?? 0);
+        else if (act.name === "git-close") {
+          card.release();
+          this.link_tooltip.cancel();
+        } else card.move(act.name === "git-next" ? 1 : -1, 1 + gitTooltip.shown(ws, this.height));
         break;
       }
       case "worktree-next":
@@ -3540,6 +3560,11 @@ export class Controller {
       if (act) await this.perform(act);
       return;
     }
+    if (this.git_card.pinned) {
+      const act = this.gitKey(String.fromCharCode(byte));
+      if (act) await this.perform(act);
+      return;
+    }
     if (byte === 27 && this.paste_card !== null) return this.closePasteCard();
     if (this.onboarding) {
       const wizard = this.onboarding;
@@ -4212,7 +4237,8 @@ export class Controller {
       if (rest[0] !== 27) {
         this.closePasteCard();
         this.pinWorktreeInput(String.fromCharCode(rest[0]));
-        const opened = this.pinResourceInput(String.fromCharCode(rest[0]));
+        const opened =
+          this.pinResourceInput(String.fromCharCode(rest[0])) || this.pinGitInput(String.fromCharCode(rest[0]));
         this.link_tooltip.cancel();
         this.dirty = true;
         if (opened) {
@@ -4257,7 +4283,7 @@ export class Controller {
       if (!latin1(seq).startsWith("\x1b[<")) {
         this.endSigninExit();
         this.pinWorktreeInput(latin1(seq));
-        const opened = this.pinResourceInput(latin1(seq));
+        const opened = this.pinResourceInput(latin1(seq)) || this.pinGitInput(latin1(seq));
         this.link_tooltip.cancel();
         this.dirty = true;
         if (opened) {
@@ -4381,6 +4407,9 @@ export class Controller {
         else if (parsed_key === "delete") await this.perform({ name: "worktree-remove" });
       } else if (this.resource_card.pinned) {
         const act = this.resourceKey(text);
+        if (act) await this.perform(act);
+      } else if (this.git_card.pinned) {
+        const act = this.gitKey(text);
         if (act) await this.perform(act);
       } else if (this.onboarding) {
         const wizard = this.onboarding;
@@ -4689,6 +4718,26 @@ export class Controller {
     }
     if (this.resource_card.pinned && !release && (button === 0 || button === 2)) this.resource_card.release();
     else if (!this.resource_card.pinned) this.resource_card.selected = null;
+    if (moved) this.aimGit(x, y);
+    const git_ws = this.gitWorkspace(),
+      git_rect = git_ws ? this.gitRect(git_ws) : null;
+    if (git_ws && git_rect?.contains(x, y)) {
+      this.pointer = { x, y };
+      const row = gitTooltip.rowAt(git_rect, git_ws, this.height, x, y);
+      if (button === 35 && row !== null) this.git_card.selected = row;
+      else if (!release && button === 0) {
+        this.ui_mouse_down = true;
+        if (row !== null) await this.reviewPush(git_ws, row);
+        else this.git_card.pin();
+      } else if (!release && (button === 64 || button === 65)) {
+        this.git_card.pin();
+        await this.perform({ name: button === 65 ? "git-next" : "git-prev" });
+      } else if (release) this.ui_mouse_down = false;
+      this.dirty = true;
+      return;
+    }
+    if (this.git_card.pinned && !release && (button === 0 || button === 2)) this.git_card.release();
+    else if (!this.git_card.pinned) this.git_card.selected = null;
     this.moveHover(button, x, y, release);
     if (!release && button === 35) this.pollMenuHover();
     if (cl.port_click) {
@@ -5558,6 +5607,12 @@ export class Controller {
       this.link_tooltip.copied_until = 0;
       this.dirty = true;
     }
+    if (this.git_aim && milliTimestamp() - this.git_aim.at >= gitTooltip.aim_ms) {
+      // The pointer stopped short of the card: what it rests on takes over.
+      this.git_aim = null;
+      if (this.gitWorkspace() !== null) this.link_tooltip.move();
+      this.dirty = true;
+    }
     if (this.resource_aim && milliTimestamp() - this.resource_aim.at >= resourceTooltip.aim_ms) {
       // The pointer stopped short of the card: what it rests on takes over.
       this.resource_aim = null;
@@ -6003,6 +6058,122 @@ export class Controller {
       else this.resource_aim = null;
     }
   }
+  /** The workspace whose push card shows, held open or hovered. A failed
+   * push's card only reports, so it has none. */
+  private gitWorkspace(): sidebar.WorkspaceEntry | null {
+    const card = this.git_card,
+      id = card.pinned ? card.workspace : this.link_tooltip.shown ? (this.link_tooltip.target?.git ?? null) : null;
+    if (id === null || id !== card.workspace) return null;
+    const ws = this.workspaceEntries().find(w => w.id === id);
+    return ws && ws.git_push.phase !== "failed" ? ws : null;
+  }
+  private gitRect(ws: sidebar.WorkspaceEntry): Rect | null {
+    return gitTooltip.geometry(ws, this.width, this.height, this.git_card.anchor.x, this.git_card.anchor.y);
+  }
+  /** The card, its label, and the label's row on to the card's right edge. */
+  private gitBridgeContains(ws: sidebar.WorkspaceEntry, rect: Rect, x: number, y: number): boolean {
+    const at = this.git_card.anchor;
+    return (
+      rect.contains(x, y) ||
+      (y === at.y && x >= at.x && x < rect.x + rect.w) ||
+      sidebar.gitActionWorkspace(this.sidebarView([]), this.workspaceEntries(), this.git_hover, x, y)?.id === ws.id
+    );
+  }
+  private gitHoverContains(x: number, y: number): boolean {
+    const ws = this.gitWorkspace(),
+      rect = ws ? this.gitRect(ws) : null;
+    if (!ws || !rect) return false;
+    if (this.gitBridgeContains(ws, rect, x, y)) return true;
+    return this.git_aim !== null && gitTooltip.aimed(rect, this.git_aim, x, y);
+  }
+  /** Starts aiming when the pointer steps off the push label toward the
+   * card and keeps the card while each move stays inside the triangle. */
+  private aimGit(x: number, y: number): void {
+    const ws = this.gitWorkspace(),
+      rect = ws ? this.gitRect(ws) : null;
+    if (!ws || !rect || this.gitBridgeContains(ws, rect, x, y)) {
+      this.git_aim = null;
+      return;
+    }
+    const from = this.pointer;
+    if (from && !rect.contains(from.x, from.y) && this.gitBridgeContains(ws, rect, from.x, from.y))
+      this.git_aim = { x: from.x, y: from.y, at: 0 };
+    if (this.git_aim) {
+      if (gitTooltip.aimed(rect, this.git_aim, x, y)) this.git_aim.at = milliTimestamp();
+      else this.git_aim = null;
+    }
+  }
+  /** An arrow or Enter over the hovered push card holds it open for the
+   * keyboard. Without a hovered row it selects the heading and takes the key. */
+  private pinGitInput(input: string): boolean {
+    const card = this.git_card;
+    if (card.pinned || this.gitWorkspace() === null) return false;
+    const key = keys.parse(input),
+      event = keyboard.decode(input);
+    if (
+      input !== "\r" &&
+      key !== "up" &&
+      key !== "down" &&
+      !(event && [13, keyboard.arrow_up, keyboard.arrow_down].includes(event.codepoint))
+    )
+      return false;
+    const hovered = card.selected !== null;
+    card.pin();
+    return !hovered;
+  }
+  /** The pinned push card's keys. */
+  private gitKey(input: string): Action | null {
+    switch (input.length === 1 ? input : keys.parse(input)) {
+      case "\x1b":
+        return { name: "git-close" };
+      case "\r":
+        return { name: "git-go" };
+      case "j":
+      case "\x0e":
+      case "down":
+        return { name: "git-next" };
+      case "k":
+      case "\x10":
+      case "up":
+        return { name: "git-prev" };
+    }
+    return null;
+  }
+  /** Opens a push card row's review: the panel on a pane in the workspace's
+   * own checkout, pinned there when it isn't the focused one. */
+  private async reviewPush(ws: sidebar.WorkspaceEntry, row: number): Promise<void> {
+    const wanted = gitTooltip.review(ws, row);
+    this.git_card.release();
+    this.git_aim = null;
+    this.link_tooltip.cancel();
+    this.review.preview(null);
+    this.dirty = true;
+    if (!wanted) return;
+    const pane = this.checkoutPane(ws);
+    if (!pane) {
+      this.notice(` No pane in ${ws.name}'s checkout to review from`);
+      return;
+    }
+    this.review.pinned = false;
+    if (!this.review.open) this.openReview();
+    else this.enterReview();
+    if (!this.review.open) return;
+    this.review.follow(this.reviewTarget(pane));
+    this.review.pinned = pane.id !== this.focused()?.id;
+    this.review.showScope(wanted.scope, wanted.pick);
+  }
+  /** A pane whose review reads the workspace's own checkout: the focused
+   * one when it does, else its first. */
+  private checkoutPane(ws: sidebar.WorkspaceEntry): Pane | null {
+    const linked = new Set(worktrees.linked(ws.worktrees).map(c => c.path));
+    const panes = this.runtime.panes.filter(p => {
+      if (this.runtime.workspaces.owner(p.id)?.id !== ws.id) return false;
+      const cwd = this.reviewCwd(p);
+      return (cwd === ws.cwd || cwd.startsWith(ws.cwd + "/")) && !linked.has(cwd);
+    });
+    const focused = this.focused();
+    return panes.find(p => p.id === focused?.id) ?? panes[0] ?? null;
+  }
   /** No modal, drag, or selection is claiming the pointer right now. */
   private hoverIdle(): boolean {
     return (
@@ -6090,7 +6261,8 @@ export class Controller {
       if (
         moved &&
         !this.linkHoverContains(x, y) &&
-        (this.signin || (!this.resourceHoverContains(x, y) && !this.worktreeHoverContains(x, y)))
+        (this.signin ||
+          (!this.resourceHoverContains(x, y) && !this.worktreeHoverContains(x, y) && !this.gitHoverContains(x, y)))
       ) {
         const resource_hit = this.signin
           ? null
@@ -6116,6 +6288,7 @@ export class Controller {
       if (!this.signin) {
         if (this.worktreeHoverContains(pointer.x, pointer.y)) return true;
         if (this.resourceHoverContains(pointer.x, pointer.y)) return true;
+        if (this.gitHoverContains(pointer.x, pointer.y)) return true;
         const ws = sidebar.resourceAt(this.sidebarView([]), this.workspaceEntries(), pointer.x, pointer.y);
         if (ws && resourceTooltip.geometry(this.width, this.height, this.sidebarView([]).width, pointer.y) !== null) {
           target = { resource: ws.id };
@@ -6133,6 +6306,11 @@ export class Controller {
         if (git) {
           target = { git: git.id };
           if (git.git_push.phase === "failed") return true;
+          if (!this.git_card.pinned) {
+            if (this.git_card.workspace !== git.id) this.git_card.selected = null;
+            this.git_card.workspace = git.id;
+            this.git_card.anchor = { x: pointer.x, y: pointer.y };
+          }
         }
         const worktree = sidebar.worktreeAt(this.sidebarView([]), this.workspaceEntries(), pointer.x, pointer.y);
         if (
@@ -6237,6 +6415,9 @@ export class Controller {
         this.resource_card.place = this.processPlace(this.selectedProcess());
       }
     }
+    const git_ws = this.gitWorkspace(),
+      ghost = git_ws && this.git_card.selected !== null ? gitTooltip.review(git_ws, this.git_card.selected) : null;
+    this.review.preview(ghost && git_ws ? { cwd: git_ws.cwd, name: git_ws.name, ...ghost } : null);
     const card = this.paste_card;
     const focused = this.focused();
     if (this.review.open) {
@@ -6247,7 +6428,11 @@ export class Controller {
       this.review.dest = this.reviewTarget();
     }
     const review_width = this.sidebarView([]).panel,
-      review_focused = this.keyboard === "review" && review_width > 0;
+      review_focused = this.keyboard === "review" && review_width > 0,
+      ghost_width =
+        this.review.ghosted && review_width === 0
+          ? panel.Panel.fit(this.prefs.review_width, this.width - this.sidebarView([]).width)
+          : 0;
     return render.frame(
       this.layoutView(),
       this.runtime.panes,
@@ -6263,6 +6448,7 @@ export class Controller {
         resource_hover: this.link_tooltip.target?.resource ?? null,
         resource_card: (tooltip_ready || this.resource_card.pinned) && detail !== null ? this.resource_card : null,
         git_hover: this.hoverIdle() ? this.git_hover : null,
+        git_card: (tooltip_ready || this.git_card.pinned) && git_ws ? this.git_card : null,
         worktree_card: this.worktreeCard(),
         worktree_spotlight: this.spotlight(),
         message:
@@ -6346,6 +6532,13 @@ export class Controller {
           review_width > 0
             ? (w: Writer) =>
                 this.review.draw(w, this.width - review_width, 0, review_width, this.height, review_focused)
+            : null,
+        review_ghost:
+          ghost_width > 0
+            ? {
+                width: ghost_width,
+                draw: (w: Writer) => this.review.draw(w, this.width - ghost_width, 0, ghost_width, this.height, false),
+              }
             : null,
         signin_draw: this.signin ? (w: Writer, pointer: render.Pointer | null) => this.drawSignin(w, pointer) : null,
       }),

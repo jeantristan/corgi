@@ -24,6 +24,7 @@ import * as rowGlide from "./row_glide";
 import type { Cell } from "./fork_motion";
 import * as pasteCard from "./paste_card";
 import * as resourceTooltip from "./resource_tooltip";
+import * as gitTooltip from "./git_tooltip";
 import * as linkTooltip from "./link_tooltip";
 import * as linkThumbnail from "./link_thumbnail";
 import type { Images } from "./pane_images";
@@ -132,6 +133,8 @@ export interface Ui {
   resource_hover: number | null;
   resource_card: resourceTooltip.State | null;
   git_hover: number | null;
+  /** The push card, shown or held open, with the row whose review shows dimmed. */
+  git_card: gitTooltip.State | null;
   worktree_card: worktreeTooltip.State | null;
   /** The worktree browsed in the overview, or the checkout the launcher
    * starts agents in, whose rows stay lit while the rest of the agent list dims. */
@@ -198,6 +201,8 @@ export interface Ui {
   review_keys: boolean;
   /** Draws the review panel over its columns. */
   review_draw: ((w: Writer) => void) | null;
+  /** A review shown dimmed over the panes' right columns while the panel is closed. */
+  review_ghost: { width: number; draw: (w: Writer) => void } | null;
   /** Draws an account's sign-in over the whole screen, its cursor included. */
   signin_draw: ((w: Writer, pointer: Pointer | null) => linkTooltip.Link | null) | null;
 }
@@ -212,6 +217,7 @@ export function ui(fields: Partial<Ui> & { message: string; copy_mode: boolean }
     resource_hover: null,
     resource_card: null,
     git_hover: null,
+    git_card: null,
     worktree_card: null,
     worktree_spotlight: null,
     agent_launcher: null,
@@ -260,6 +266,7 @@ export function ui(fields: Partial<Ui> & { message: string; copy_mode: boolean }
     review_focused: false,
     review_keys: false,
     review_draw: null,
+    review_ghost: null,
     signin_draw: null,
     ...fields,
   };
@@ -643,6 +650,14 @@ export function frame(view: LayoutView, panes: Pane[], width: number, height: nu
       : u.resource_card
         ? resourceTooltip.geometry(width, height, side.width, u.resource_card.anchor, u.resource_card.gpus)
         : null;
+  const git_ws =
+    u.git_card && u.agent_launcher === null && u.corgi_setup === null
+      ? (u.workspaces.find(ws => ws.id === u.git_card!.workspace) ?? null)
+      : null;
+  const git_rect = git_ws
+    ? gitTooltip.geometry(git_ws, width, height, u.git_card!.anchor.x, u.git_card!.anchor.y)
+    : null;
+  const on_git = u.pointer !== null && git_rect !== null && git_rect.contains(u.pointer.x, u.pointer.y);
   // The card hides links beneath it. Workspace rows it covers still take
   // presses, so they keep their own pointer.
   const on_card =
@@ -654,6 +669,8 @@ export function frame(view: LayoutView, panes: Pane[], width: number, height: nu
     const pointer = u.pointer;
     if (on_link_card) {
       link_pointer = linkTooltip.copyAt(link_rect!, pointer.x, pointer.y);
+    } else if (on_git) {
+      link_pointer = gitTooltip.rowAt(git_rect!, git_ws!, height, pointer.x, pointer.y) !== null;
     } else if (on_card) {
       const gpus = u.resource_card!.gpus;
       link_pointer =
@@ -807,6 +824,10 @@ export function frame(view: LayoutView, panes: Pane[], width: number, height: nu
   side.draw(w, entries, workspaces);
   if (u.git_hover !== null) sidebar.drawGitAction(w, side, u.workspaces, u.git_hover);
   if (u.review_draw) u.review_draw(w);
+  if (u.review_ghost) {
+    u.review_ghost.draw(w);
+    cover(new Rect(width - u.review_ghost.width, 0, u.review_ghost.width, height));
+  }
   if (u.corgi_badge === "image") {
     w.write(corgiBadge.hide);
     if (side.width > 0 && !badgeCovered(u, side, width, height)) w.write(corgiBadge.place());
@@ -871,6 +892,9 @@ export function frame(view: LayoutView, panes: Pane[], width: number, height: nu
         if (u.pointer && worktreeTooltip.sortAt(rect, u.pointer.x, u.pointer.y) !== null) link_pointer = true;
       } else cover(writeChip(w, "Worktrees: enlarge terminal · Esc to close", width, height, u.pointer));
     }
+  } else if (git_ws && git_rect) {
+    const card = u.git_card!;
+    cover(sidebar.drawGitTooltip(w, git_ws, width, height, card.anchor.x, card.anchor.y, card.selected));
   } else if (pinned && card_rect) {
     const name = u.workspaces.find(ws => ws.id === u.resource_card!.workspace)?.name ?? "workspace";
     resourceTooltip.draw(w, card_rect, name, u.resources, u.resource_card!, u.pointer);

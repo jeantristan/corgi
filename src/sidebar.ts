@@ -5,6 +5,7 @@ import { Style, colors, fg, bg, fgRgb, bgRgb, mix, underline } from "./palette";
 import * as corgiAnimation from "./corgi_animation";
 import * as corgiBadge from "./corgi_badge";
 import * as resourceTooltip from "./resource_tooltip";
+import * as gitTooltip from "./git_tooltip";
 import * as dropdown from "./dropdown";
 import * as worktrees from "./worktrees";
 import * as rowGlide from "./row_glide";
@@ -2005,6 +2006,7 @@ function drawGitError(w: Writer, message: string, cols: number, rows: number, px
   w.write("\x1b[0m\x1b8");
   return new Rect(x, y, width, height);
 }
+/** The push card beside (`px`, `py`), its `selected` row lit. */
 export function drawGitTooltip(
   w: Writer,
   ws: WorkspaceEntry,
@@ -2012,27 +2014,29 @@ export function drawGitTooltip(
   rows: number,
   px: number,
   py: number,
+  selected: number | null = null,
 ): Rect | null {
   if (cols < 24 || rows < 8) return null;
   if (ws.git_push.phase === "failed") return drawGitError(w, ws.git_push.message, cols, rows, px, py);
-  const width = Math.min(76, cols);
-  const count = Math.min(ws.git_commits.length, Math.floor((rows - 6) / 2));
+  const rect = gitTooltip.geometry(ws, cols, rows, px, py)!,
+    { x, y, w: width, h: height } = rect;
+  const count = gitTooltip.shown(ws, rows);
   const remaining = sat(ws.git_ahead ?? 0, count);
   const has_footer = remaining > 0 || ws.git_commits.length === 0;
-  const height = 3 + count * 2 + (has_footer ? 1 : 0);
-  const x = Math.min(px + 2, cols - width);
-  const y = Math.min(py + 1, rows - 1 - height);
-  const base = new Style({ fg: "text", bg: "bg" }).sgr();
+  const lit = (row: number) => bg(row === selected ? "selected" : "bg");
   w.write("\x1b7\x1b]8;;\x1b\\");
   for (let row = 0; row < height; row++) {
     w.write(`\x1b[${y + row + 1};${x + 1}H` + new Style({ fg: "line", bg: "bg" }).sgr());
     w.write(row === 0 ? "╭" : row === height - 1 ? "╰" : "│");
+    const item = row === 1 ? 0 : row >= 2 && row < 2 + count * 2 ? Math.floor((row - 2) / 2) + 1 : null;
+    if (item !== null) w.write(lit(item));
     w.write((row === 0 || row === height - 1 ? "─" : " ").repeat(width - 2));
+    if (item !== null) w.write(bg("bg"));
     w.write(row === 0 ? "╮" : row === height - 1 ? "╯" : "│");
   }
   const columns = new DiffColumns([ws.git_diff, ...ws.git_commits.slice(0, count).map(item => item.diff)]);
   const header = columns.width(width - 16);
-  w.write(`\x1b[${y + 2};${x + 3}H\x1b[1m` + fg("strong"));
+  w.write(`\x1b[${y + 2};${x + 3}H\x1b[1m` + fg("strong") + lit(0));
   writeEllipsis(
     w,
     `↑ ${ws.git_ahead ?? 0} unpushed commit${ws.git_ahead === 1 ? "" : "s"}`,
@@ -2040,6 +2044,7 @@ export function drawGitTooltip(
   );
   if (header > 0) columns.write(w, ws.git_diff, x + width - 1 - header, y + 2);
   ws.git_commits.slice(0, count).forEach((item, i) => {
+    const base = new Style({ fg: "text", bg: "bg" }).sgr() + lit(i + 1);
     w.write(`\x1b[${y + 3 + i * 2};${x + 3}H${base}` + fg("muted") + `${item.hash}  ` + fg("text"));
     writeEllipsis(w, item.subject, sat(width - 6, byteLength(item.hash)));
     const age = relativeTime(item.timestamp, Math.floor(Date.now() / 1000));
@@ -2059,12 +2064,12 @@ export function drawGitTooltip(
     );
   });
   if (has_footer) {
-    w.write(`\x1b[${y + height - 1};${x + 3}H${base}` + fg("faint"));
+    w.write(`\x1b[${y + height - 1};${x + 3}H` + new Style({ fg: "faint", bg: "bg" }).sgr());
     const footer = ws.git_commits.length === 0 ? "Commit details unavailable" : `+${remaining} more`;
     writeEllipsis(w, footer, width - 4);
   }
   w.write("\x1b[0m\x1b8");
-  return new Rect(x, y, width, height);
+  return rect;
 }
 /** Time taken to the second, as "45s", "1m 32s" or "1h 5m". */
 export function elapsed(ms: number): string {
