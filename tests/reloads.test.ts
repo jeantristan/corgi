@@ -476,7 +476,10 @@ m.summaries.launches = { codex: 7, claude: 4, latest: 'claude' };
           `set -g fish_greeting; function fish_prompt; printf '❯ '; end; function codex; printf '%s ' $argv > ${quote(marker)}; end\n`,
         );
       } else {
-        const config = join(this.temp.name, shell.endsWith("zsh") ? ".zshrc" : ".profile");
+        const config = join(
+          this.temp.name,
+          shell.endsWith("zsh") ? ".zshrc" : process.platform === "darwin" ? ".profile" : ".bashrc",
+        );
         writeFileSync(config, `codex() { ${body}; }\n`);
       }
       await this.pair(first, "01901234-1234-1234-1234-123456789def");
