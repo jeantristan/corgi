@@ -26,8 +26,11 @@ See [HACKING.md](HACKING.md) for development workflows and architecture.
   save; `landingpage:build` writes one self-contained `site/dist/index.html`
   (and `moonlander.html`), `landingpage:start` serves it, and
   `landingpage:publish` builds it and deploys it to corgi.computer with
-  wrangler, as a Worker on `/` and `/moonlander` (`site/wrangler.jsonc`);
-  other paths pass through to the release bucket. `bun tools/site_frames.ts`
+  wrangler, as an assets-only Worker routed on `/` and `/moonlander`
+  (`site/wrangler.jsonc`); other paths go straight to the release bucket.
+  Keep it script-free and narrowly routed: asset hits are free, but a
+  script runs on every request it sees and counts against the plan's
+  limit. `bun tools/site_frames.ts`
   re-records the page's screens into `site/frames.json` with Corgi's renderer
   (`--check` compares). The page imports Corgi's animation code, so keep
   `src/corgi_animation.ts` browser-safe. It also runs the review panel, the

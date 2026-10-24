@@ -1,7 +1,7 @@
 /**
  * Builds the landing page and deploys it to corgi.computer with wrangler, as
- * a Worker serving static assets on / and /moonlander (site/wrangler.jsonc).
- * Other paths pass through to the release bucket, install.sh among them.
+ * an assets-only Worker routed on / and /moonlander (site/wrangler.jsonc).
+ * Other paths go straight to the release bucket, install.sh among them.
  */
 import { join } from "node:path";
 import * as tooling from "../scripts/tooling.ts";
