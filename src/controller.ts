@@ -710,7 +710,11 @@ export class Controller {
     this.prefs = preferences.load();
     this.review.tree_rows = this.prefs.review_tree_rows;
     if (!this.prefs.onboarding_complete)
-      this.onboarding = Object.assign(new onboarding.State(), { preset: this.prefs.preset, prefix: this.prefs.prefix });
+      this.onboarding = Object.assign(new onboarding.State(), {
+        preset: this.prefs.preset,
+        prefix: this.prefs.prefix,
+        theme: this.prefs.theme,
+      });
   }
   private groupFolded(id: number): boolean {
     return this.folded_groups.includes(id);
@@ -3139,7 +3143,7 @@ export class Controller {
     this.search_mode = false;
     this.selection = null;
     this.cancelDividers();
-    this.onboarding = onboarding.State.start(mode, this.prefs.preset, this.prefs.prefix);
+    this.onboarding = onboarding.State.start(mode, this.prefs.preset, this.prefs.prefix, this.prefs.theme);
     this.dirty = true;
   }
   /** Carries out what Enter or a click in Corgi setup asked for. */
@@ -3346,6 +3350,10 @@ export class Controller {
     let reload: boolean;
     try {
       reload = await this.storeKeys(wizard.preset, wizard.prefix);
+      if (wizard.theme !== this.prefs.theme) {
+        preferences.update({ theme: wizard.theme });
+        this.prefs.theme = wizard.theme;
+      }
     } catch (error) {
       wizard.fail(error as Error);
       this.dirty = true;
@@ -5933,7 +5941,10 @@ export class Controller {
     return hide ? "\x1b[?2026h" + hide + frame + "\x1b[?2026l" : frame;
   }
   private renderFrame(): string {
-    palette.use(this.corgi_setup?.previewTheme(this.prefs) ?? this.prefs.theme, this.terminal_colors);
+    palette.use(
+      this.onboarding ? this.onboarding.theme : (this.corgi_setup?.previewTheme(this.prefs) ?? this.prefs.theme),
+      this.terminal_colors,
+    );
     if (this.moonlander) {
       const frame = this.moonlander.frame(this.width, this.height, this.cell_pixels, this.supports_kitty_graphics);
       for (const write of this.moonlander.takeWrites()) this.queueEffect({ write_terminal: write });

@@ -53,18 +53,29 @@ export function derived(refresh: () => void) {
 }
 /** `host` holds the terminal's colors, when it answered. Without them,
  * Corgi paints its own background and Animal Style keeps Corgi's colors on
- * the terminal's. */
-export function use(name: Theme, host: terminalPalette.Colors | null = null) {
+ * the terminal's. Without a `choice`, the terminal picks (`chosen`). */
+export function use(choice: Theme | undefined, host: terminalPalette.Colors | null = null) {
   const recolored = host !== terminal;
   if (recolored) {
     terminal = host;
     look = looks(host);
   }
+  const name = chosen(choice);
   if (name === current && !recolored) return;
   current = name;
   const next = tokensOf(name);
   for (const token of Object.keys(colors) as Token[]) colors[token].splice(0, 3, ...next[token]);
   for (const refresh of refreshers) refresh();
+}
+/** The theme a choice means: one picked, or Animal Style on a light
+ * terminal and Corgi otherwise. */
+export function chosen(choice: Theme | undefined): Theme {
+  return choice ?? (terminal && terminalPalette.light(terminal) ? "animal_style" : "corgi");
+}
+/** The background the theme in use paints under everything, or null when it
+ * leaves the terminal's own. */
+export function painted(): Rgb | null {
+  return paints(current) ? colors.bg : null;
 }
 function tokensOf(theme: Theme): Record<Token, Rgb> {
   return look[theme].colors;
@@ -76,6 +87,12 @@ function paints(theme: Theme): boolean {
 /** `theme` lets a preview show another theme's colors. */
 export function fg(t: Token, theme: Theme = current) {
   return fgRgb(tokensOf(theme)[t]);
+}
+/** `t` painted in `theme`'s colors even where the theme leaves `bg` to the
+ * terminal: a preview beside another theme can't use the terminal's, which
+ * Corgi may have moved to its own (`host_background.ts`). */
+export function swatch(t: Token, theme: Theme): string {
+  return bgRgb(tokensOf(theme)[t]);
 }
 export function bg(t: Token, theme: Theme = current) {
   return `\x1b[${bgFields(t, theme).join(";")}m`;

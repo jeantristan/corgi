@@ -16,6 +16,8 @@ import {
   colors,
   derived,
   use,
+  chosen,
+  painted,
   type Rgb,
   type Token,
 } from "./palette";
@@ -94,4 +96,23 @@ test("mix blends toward the second color", () => {
 });
 test("termhtml's corgi theme matches the palette", () => {
   expect(readFileSync(resolve(import.meta.dir, "../termhtml/index.html"), "utf8")).toContain(termhtmlTheme());
+});
+test("unpicked, a light terminal gets Animal Style and only a painted background goes to the host", () => {
+  const day = { foreground: [74, 69, 67] as Rgb, background: [247, 247, 247] as Rgb, ansi: Array(16).fill(null) },
+    night = { foreground: [192, 202, 245] as Rgb, background: [26, 27, 38] as Rgb, ansi: Array(16).fill(null) };
+  try {
+    use(undefined, day);
+    expect(chosen(undefined)).toBe("animal_style");
+    expect(painted()).toBeNull();
+    // Corgi paints its own over a light terminal.
+    use("corgi", day);
+    expect(painted()).toEqual([24, 27, 32]);
+    use(undefined, night);
+    expect(chosen(undefined)).toBe("corgi");
+    // Night is dark enough for Corgi to keep.
+    expect(painted()).toBeNull();
+    expect(chosen("animal_style")).toBe("animal_style");
+  } finally {
+    use(undefined, null);
+  }
 });

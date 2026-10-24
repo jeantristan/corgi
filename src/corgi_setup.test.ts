@@ -1260,7 +1260,8 @@ test("the theme under the cursor previews until Enter keeps it", () => {
   expect(text).toMatch(/Theme\s+Corgi\s+│/);
   expect(text).toMatch(/● Corgi\s+▶ ● ○  Corgi's own/);
   expect(text).toMatch(/○ Animal Style\s+▶ ● ○  your terminal's/);
-  expect(menu.previewTheme(prefs)).toBe("corgi");
+  // Unset, the terminal picks.
+  expect(menu.previewTheme(prefs)).toBeUndefined();
   expect(menu.enter(s, prefs)).toBeNull();
   expect(menu.cursor).toBe(0);
   menu.move(true, s, prefs);

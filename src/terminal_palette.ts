@@ -51,10 +51,7 @@ function inFamily(name: Status, hue: number): boolean {
 /** `clear` is false when `bg` had to be deepened and must be painted. */
 export function tokens(c: Colors): { colors: Record<Token, Rgb>; clear: boolean } {
   const terminal = c.background,
-    dark =
-      luminance(c.foreground) !== luminance(terminal)
-        ? luminance(c.foreground) > luminance(terminal)
-        : luminance(terminal) < 0.18,
+    dark = !light(c),
     extreme: Rgb = dark ? [255, 255, 255] : [0, 0, 0],
     opposite: Rgb = dark ? [0, 0, 0] : [255, 255, 255],
     clear = contrast(extreme, terminal) / keycap_room >= min_line,
@@ -92,6 +89,12 @@ export function tokens(c: Colors): { colors: Record<Token, Rgb>; clear: boolean 
     },
     clear,
   };
+}
+/** Whether the theme sets dark text on a light background. */
+export function light(c: Colors): boolean {
+  const ink = luminance(c.foreground),
+    ground = luminance(c.background);
+  return ink !== ground ? ink < ground : ground >= 0.18;
 }
 /** Corgi's own colors on the terminal's background, when it is dark enough:
  * panels step from it, so they carry its tint, and text and status colors

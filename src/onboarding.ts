@@ -16,10 +16,15 @@ import * as shortcut_help from "./shortcut_help";
 import * as ghostty_integration from "./ghostty_integration";
 export type Step = "presets" | "keymap" | "connect" | "import";
 export type Mode = "welcome" | "keyboard";
+/** Which list the arrows move: the presets, or welcome's themes beside them. */
+export type Column = "presets" | "theme";
 const Message = BoundedText(256);
 export class State {
   preset: km.Preset = "corgi";
   prefix: km.Prefix = "ctrl_b";
+  /** The theme picked here, which the screen shows as it goes; unset, the terminal picks. */
+  theme: palette.Theme | undefined = undefined;
+  column: Column = "presets";
   step: Step = "presets";
   source_initialized = false;
   help = new shortcut_help.State();
@@ -29,11 +34,12 @@ export class State {
   mode: Mode = "welcome";
   dismissable = false;
   cancelled = false;
-  static start(mode: Mode, preset: km.Preset, prefix: km.Prefix) {
+  static start(mode: Mode, preset: km.Preset, prefix: km.Prefix, theme: palette.Theme | undefined = undefined) {
     const state = new State();
     state.mode = mode;
     state.preset = preset;
     state.prefix = prefix;
+    state.theme = theme;
     state.dismissable = true;
     return state;
   }
@@ -49,6 +55,15 @@ export class State {
   }
   setMessage(msg: string) {
     this.message = new Message(msg);
+  }
+  /** Welcome picks a theme beside the keys; the keyboard screen only keys. */
+  themed(): boolean {
+    return this.mode === "welcome";
+  }
+  moveTheme(down: boolean) {
+    const themes = palette.available_themes,
+      index = themes.indexOf(palette.chosen(this.theme));
+    this.theme = themes[(index + (down ? 1 : themes.length - 1)) % themes.length];
   }
   enterKeymap() {
     this.step = "keymap";
@@ -88,8 +103,12 @@ export class State {
     if (this.step === "presets") {
       const presets = km.available_presets,
         index = presets.indexOf(this.preset);
-      if (b === 106 || b === 14) this.preset = presets[(index + 1) % presets.length];
+      if ((b === 106 || b === 14 || b === 107 || b === 16) && this.column === "theme")
+        this.moveTheme(b === 106 || b === 14);
+      else if (b === 106 || b === 14) this.preset = presets[(index + 1) % presets.length];
       else if (b === 107 || b === 16) this.preset = presets[(index + presets.length - 1) % presets.length];
+      else if (b === 108 && this.themed()) this.column = "theme";
+      else if (b === 104) this.column = "presets";
       else if (b >= 49 && b <= 52 && b - 49 < presets.length) this.preset = presets[b - 49];
       else if ([112, 80, 32].includes(b)) this.prefix = this.prefix === "ctrl_b" ? "ctrl_a" : "ctrl_b";
       else if (b === 63) this.enterKeymap();
@@ -141,6 +160,8 @@ export class State {
     const key = keys.parse(seq);
     if (key === "up") return this.key(16, conn);
     if (key === "down") return this.key(14, conn);
+    if (this.step === "presets" && (key === "right" || key === "left"))
+      return this.key(key === "right" ? "l" : "h", conn);
     const picker = this.picker;
     if (key === "page_up") picker.scroll = Math.max(0, picker.scroll - 5);
     if (key === "page_down") picker.scroll += 5;
@@ -173,9 +194,18 @@ export class State {
       for (const [i, card] of layout.cards.entries())
         if (card.contains(x, y)) {
           this.preset = km.available_presets[i];
+          this.column = "presets";
           this.focus = 0;
           return false;
         }
+      if (this.themed())
+        for (const [i, option] of layout.themes.entries())
+          if (option.contains(x, y)) {
+            this.theme = palette.available_themes[i];
+            this.column = "theme";
+            this.focus = 0;
+            return false;
+          }
       if (this.preset !== "cmux" && layout.prefix.contains(x, y)) return this.key("p", conn);
       if (ry === layout.help_y && rx >= layout.detail_x) {
         if (rx < layout.detail_x + 20) return this.key("?", conn);
@@ -207,11 +237,9 @@ export class State {
     }
     box(w, b, false);
     put(w, b, 2, 0, { welcome: " Welcome to Corgi ", keyboard: " Keyboard shortcuts " }[this.mode], bright);
-    put(
-      w,
-      b,
-      3,
-      2,
+    // Beside the theme box, the heading keeps to the cards' column.
+    const room = this.step === "presets" && this.themed() ? presetLayout(b).cards[0].w : Infinity;
+    const heading = wrap(
       {
         presets: "Which shortcuts feel like home?",
         keymap: "Your shortcuts",
@@ -220,21 +248,19 @@ export class State {
           picker.stage
         ],
       }[this.step],
-      bright,
+      room,
     );
-    put(
-      w,
-      b,
-      3,
-      3,
+    const lead = wrap(
       {
         presets: "Choose familiar keys.",
         keymap: "",
         connect: "Your host terminal needs to forward these shortcuts.",
         import: picker.summary(),
       }[this.step],
-      dim,
+      room,
     );
+    heading.forEach((line, i) => put(w, b, 3, 2 + i, line, bright));
+    lead.forEach((line, i) => put(w, b, 3, 2 + heading.length + i, line, dim));
     switch (this.step as Step) {
       case "presets":
         drawPresets(w, b, this);
@@ -263,7 +289,7 @@ export class State {
         warm,
       );
     const skip = this.step === "import" && picker.stage === "choose" ? skipImportButton(b) : null;
-    const hint = footerHint(this);
+    const hint = footerHint(this, b.w - 32);
     put(w, b, 3, b.h - (skip && 5 + hint.length > skip.x - b.x ? 4 : 3), hint, dim);
     if (skip) put(w, b, skip.x - b.x, skip.y - b.y, "[ S Skip import ]", text);
     let cta: string;
@@ -328,7 +354,14 @@ export function bounds(cols: number, rows: number): Rect {
     h = Math.min(rows, 36);
   return new Rect(Math.floor((cols - w) / 2), Math.floor((rows - h) / 2), w, h);
 }
-let border: string, text: string, bright: string, dim: string, warm: string, selected_style: string;
+let border: string,
+  text: string,
+  bright: string,
+  dim: string,
+  warm: string,
+  selected_style: string,
+  here_style: string,
+  here_dim: string;
 palette.derived(() => {
   border = new palette.Style({ fg: "line", bg: "surface" }).sgr();
   text = new palette.Style({ fg: "text", bg: "surface" }).sgr();
@@ -336,6 +369,8 @@ palette.derived(() => {
   dim = new palette.Style({ fg: "faint", bg: "surface" }).sgr();
   warm = new palette.Style({ fg: "warm", bg: "surface" }).sgr();
   selected_style = new palette.Style({ fg: "text", bg: "selected" }).sgr();
+  here_style = new palette.Style({ fg: "strong", bg: "selected" }).sgr();
+  here_dim = new palette.Style({ fg: "muted", bg: "selected" }).sgr();
 });
 function put(w: Writer, b: Rect, x: number, y: number, str: string, style: string) {
   if (x >= b.w - 1 || (y >= b.h - 1 && y !== 0)) return;
@@ -351,10 +386,21 @@ function box(w: Writer, b: Rect, on: boolean) {
     w.write(row === 0 ? "╮" : row === b.h - 1 ? "╯" : "│");
   }
 }
-function footerHint(s: State): string {
+/** The keys under the screen, in `room` columns before the button. */
+function footerHint(s: State, room: number): string {
   switch (s.step) {
-    case "presets":
-      return s.dismissable ? "Esc close · ↑↓ choose · P prefix · ? keymap" : "↑↓ choose · P prefix · ? keymap";
+    case "presets": {
+      const keys = [
+        ...(s.dismissable ? ["Esc close"] : []),
+        "↑↓ choose",
+        ...(s.themed() ? [s.column === "theme" ? "← keys" : "→ theme"] : []),
+        "P prefix",
+        "? keymap",
+      ];
+      // Short of room, the arrows go: the cards already read as a list.
+      const all = keys.join(" · ");
+      return all.length <= room ? all : keys.filter(key => key !== "↑↓ choose").join(" · ");
+    }
     case "keymap":
       return "";
     case "connect":
@@ -372,8 +418,11 @@ export function presetLayout(b: Rect) {
   const card_w = b.w >= 100 ? 32 : 24;
   const x = card_w + 7;
   const detail = detailLayout(b.x + x, b.y + 6, b.w - x - 4, b.h < 32);
+  const theme = new Rect(b.x + x, b.y + 2, b.w - x - 4, 4);
   return {
     cards: km.available_presets.map((_, i) => new Rect(b.x + 3, b.y + 6 + i * 4, card_w, 4)),
+    theme,
+    themes: themeOptions(theme),
     hero: detail.hero,
     prefix: detail.prefix,
     split: detail.split,
@@ -382,6 +431,10 @@ export function presetLayout(b: Rect) {
     summary_y: 6 + detail.summary_y,
     help_y: 6 + detail.help_y,
   };
+}
+/** Each theme's row in the theme box. */
+function themeOptions(box: Rect): Rect[] {
+  return palette.available_themes.map((_, i) => new Rect(box.x + 1, box.y + 1 + i, box.w - 2, 1));
 }
 /** The keys a preset teaches, from the detail's top-left corner. Onboarding
  * draws it beside the preset cards; Corgi setup beside its preset options.
@@ -421,15 +474,52 @@ function drawPresets(w: Writer, b: Rect, s: State) {
   const layout = presetLayout(b);
   km.available_presets.forEach((preset, i) => {
     const card = layout.cards[i];
-    const picked = s.preset === preset;
-    box(w, card, picked);
+    const picked = s.preset === preset,
+      here = picked && s.column === "presets";
+    box(w, card, here);
     const dot = picked ? "●" : "○";
     const paw = preset === "corgi" ? "🐕 " : "";
-    put(w, card, 2, 1, `${dot} ${paw}${km.name(preset)}`, picked ? selected_style : bright);
+    put(w, card, 2, 1, `${dot} ${paw}${km.name(preset)}`, here ? selected_style : bright);
     const description = card.w >= 32 ? km.description(preset) : km.shortDescription(preset);
-    put(w, card, 4, 2, description, picked ? selected_style : dim);
+    put(w, card, 4, 2, description, here ? selected_style : dim);
   });
   drawPresetDetail(w, layout.prefix.x, layout.prefix.y, layout.prefix.w, b.h < 32, s);
+  if (s.themed()) drawTheme(w, layout, s);
+}
+/** The themes stacked in a box, a caret at the one picked. With the arrows
+ * on it, the picked row is highlighted like the launcher's. Where there is
+ * room, each row ends in that theme's own colors. */
+function drawTheme(w: Writer, layout: ReturnType<typeof presetLayout>, s: State) {
+  const frame = layout.theme,
+    picked = palette.chosen(s.theme),
+    sample_w = frame.w - 39;
+  box(w, frame, false);
+  put(w, frame, 2, 0, " Theme ", bright);
+  palette.available_themes.forEach((theme, i) => {
+    const on = theme === picked,
+      here = on && s.column === "theme",
+      row = layout.themes[i].y - frame.y;
+    if (here) {
+      w.write(`\x1b[${frame.y + row + 1};${frame.x + 2}H${here_style}`);
+      w.splat(" ", frame.w - 2);
+    }
+    put(w, frame, 2, row, on ? "›" : " ", here ? here_style : bright);
+    put(w, frame, 4, row, palette.themes[theme].label, here ? here_style : on ? bright : text);
+    put(w, frame, 19, row, theme === "corgi" ? "Corgi's own" : "Your terminal's", here ? here_dim : dim);
+    if (sample_w >= 29) {
+      w.write(`\x1b[${frame.y + row + 1};${frame.x + 38}H\x1b[0m${palette.swatch("bg", theme)}`);
+      w.splat(" ", sample_w);
+      w.write(`\x1b[${frame.y + row + 1};${frame.x + 39}H${sample(theme)}`);
+    }
+  });
+}
+/** The sidebar's agent states in `theme`'s colors; an unread name turns bold, as there. */
+function sample(theme: palette.Theme): string {
+  const ink = (token: palette.Token, bold = false) => (bold ? "\x1b[1m" : "\x1b[22m") + palette.fg(token, theme);
+  return (
+    `${ink("accent", true)}▶ ${ink("text")}working  ${ink("accent", true)}● ${palette.fg("text", theme)}unread  ` +
+    `${ink("muted")}○ ${ink("text")}clear\x1b[22m`
+  );
 }
 export function drawPresetDetail(w: Writer, x: number, y: number, width: number, compact: boolean, s: Keys) {
   const layout = detailLayout(x, y, width, compact);
@@ -530,4 +620,14 @@ function ghosttyHost(): boolean {
     process.env.GHOSTTY_RESOURCES_DIR !== undefined &&
     process.env.CMUX_WORKSPACE_ID === undefined
   );
+}
+/** `text` broken at spaces into lines of at most `width`. */
+function wrap(text: string, width: number): string[] {
+  const lines: string[] = [];
+  for (const word of text.split(" ")) {
+    const last = lines.length - 1;
+    if (last >= 0 && lines[last].length + 1 + word.length <= width) lines[last] += " " + word;
+    else lines.push(word);
+  }
+  return lines;
 }

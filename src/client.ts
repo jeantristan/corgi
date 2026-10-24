@@ -4,6 +4,7 @@ import { run, writeAll, Stdin } from "./viewer";
 import { runTest } from "./viewer_test";
 import { Probe } from "./host_probe";
 import * as keyboard from "./keyboard";
+import * as hostBackground from "./host_background";
 import type { Transport } from "./mirror";
 
 let keyboard_enabled = false;
@@ -20,7 +21,8 @@ export function cleanup(): void {
       keyboard_enabled = false;
     }
     writeAll(
-      "\x1b[?2026l\x1b[0m\x1b[?25h\x1b[?1003l\x1b[?1002l\x1b[?1006l\x1b[?1004l\x1b[?2031l\x1b[?5522l\x1b[?2004l\x1b[?1049l\x1b]22;default\x1b\\",
+      hostBackground.release() +
+        "\x1b[?2026l\x1b[0m\x1b[?25h\x1b[?1003l\x1b[?1002l\x1b[?1006l\x1b[?1004l\x1b[?2031l\x1b[?5522l\x1b[?2004l\x1b[?1049l\x1b]22;default\x1b\\",
     );
     if (cursor_blink_saved) {
       writeAll("\x1b[?12r");

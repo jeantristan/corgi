@@ -34,7 +34,10 @@ test("preferences round trip and fall back to defaults", async () => {
     expect(await read(file)).toMatchObject({ theme: "animal_style", corgi_intensity: 0 });
     // A theme this build doesn't know keeps the rest of the file.
     await writeFile(file, '{"theme":"solarized","sleeping_corgis":false}');
-    expect(await read(file)).toMatchObject({ theme: "corgi", corgi_intensity: 0 });
+    expect(await read(file)).toMatchObject({ theme: undefined, corgi_intensity: 0 });
+    // Unset, the theme stays out of the file and the terminal keeps picking.
+    await write(file, new Preferences());
+    expect(JSON.parse(await readFile(file, "utf8"))).not.toHaveProperty("theme");
     await writeFile(file, '{"agent_scroll":{"workspace":null,"offset":4}}');
     expect((await read(file)).agent_scroll).toEqual({ workspace: null, offset: 4 });
     await writeFile(file, '{"agent_scroll":{"workspace":2,"offset":-1}}');

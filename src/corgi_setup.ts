@@ -1525,7 +1525,7 @@ export class Menu {
     let dx = x0 + 4 + label_w + 3;
     if (o.swatch && right - dx >= 7) {
       w.write(
-        `${at(dx, y)}\x1b[0;1m${palette.bg("bg", o.swatch)}${palette.fg("accent", o.swatch)} ▶ ` +
+        `${at(dx, y)}\x1b[0;1m${palette.swatch("bg", o.swatch)}${palette.fg("accent", o.swatch)} ▶ ` +
           `${palette.fg("warm", o.swatch)}● \x1b[22m${palette.fg("muted", o.swatch)}○ `,
       );
       dx += 8;
@@ -1784,7 +1784,7 @@ export class Menu {
             option({
               label: palette.themes[theme].label,
               detail: theme === "corgi" ? "Corgi's own" : "your terminal's",
-              mark: theme === prefs.theme ? "on" : "off",
+              mark: theme === palette.chosen(prefs.theme) ? "on" : "off",
               apply: theme === prefs.theme ? null : { kind: "theme", theme },
               action: "use",
               swatch: theme,
@@ -1977,7 +1977,7 @@ export class Menu {
     ];
   }
   /** The theme under the cursor, or the one in use. */
-  previewTheme(prefs: Preferences): palette.Theme {
+  previewTheme(prefs: Preferences): palette.Theme | undefined {
     if (this.item !== "theme" || this.focus !== "options") return prefs.theme;
     return palette.available_themes[this.cursor] ?? prefs.theme;
   }
@@ -1998,7 +1998,7 @@ export class Menu {
       case "clever_corgi":
         return { text: "", tone: "faint" };
       case "theme":
-        return { text: palette.themes[prefs.theme].label, tone: "muted" };
+        return { text: palette.themes[palette.chosen(prefs.theme)].label, tone: "muted" };
       case "shell":
         if (shellPicker.missing(this.shell)) return { text: "not found", tone: "warm" };
         return { text: this.shell.path ? this.shell.path.split("/").pop()! : "", tone: "muted" };

@@ -31,7 +31,9 @@ export class Preferences {
   resources: Resources = { enabled: true };
   /** Decorative sidebar corgi brightness, from off (0) to full (100). */
   corgi_intensity = 50;
-  theme: palette.Theme = "corgi";
+  /** The theme picked in setup or onboarding; unset, the terminal picks
+   * (`palette.chosen`), and the file leaves it out. */
+  theme: palette.Theme | undefined = undefined;
   /** Where the launcher puts a new worktree, as `worktree_folder.ts` reads it. */
   worktree_folder = worktreeFolder.default_template;
   /** The review panel's width, as last dragged. */
@@ -112,7 +114,7 @@ export function readExisting(file: string): Preferences | null {
     if ("theme" in d) {
       if (typeof d.theme !== "string") return null;
       // A theme from a newer build falls back rather than resetting the rest.
-      v.theme = palette.parseTheme(d.theme) ?? "corgi";
+      v.theme = palette.parseTheme(d.theme) ?? undefined;
     }
     if ("worktree_folder" in d) {
       if (typeof d.worktree_folder !== "string") return null;

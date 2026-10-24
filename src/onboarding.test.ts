@@ -1,5 +1,6 @@
 import { test, expect } from "bun:test";
-import { State } from "./onboarding";
+import { State, bounds, presetLayout } from "./onboarding";
+import * as palette from "./palette";
 import { Worker, workspace, pane, available_sources } from "./import/catalog";
 const conn: any = {
   call: () => {
@@ -112,4 +113,35 @@ test("keyboard setup saves without chaining and Esc closes it; first run cannot 
   keyboard.close();
   escape.close();
   welcome.close();
+});
+test("welcome's arrows move between the presets and the themes beside them", async () => {
+  // 3024 Day: dark text on a light background.
+  palette.use(undefined, { foreground: [74, 69, 67], background: [247, 247, 247], ansi: Array(16).fill(null) });
+  const welcome = new State(),
+    keyboard = State.start("keyboard", "corgi", "ctrl_b");
+  try {
+    expect(welcome.frame(112, 36)).toContain(" Theme ");
+    expect(palette.chosen(welcome.theme)).toBe("animal_style");
+    await welcome.sequence("\x1b[C", conn);
+    expect(welcome.column).toBe("theme");
+    await welcome.sequence("\x1b[B", conn);
+    expect(welcome.theme).toBe("corgi");
+    expect(welcome.preset).toBe("corgi");
+    await welcome.sequence("\x1b[D", conn);
+    await welcome.sequence("\x1b[B", conn);
+    expect(welcome.theme).toBe("corgi");
+    expect(welcome.preset).toBe("tmux");
+    const animal = presetLayout(bounds(76, 26)).themes[1];
+    await welcome.click(76, 26, animal.x + 20, animal.y, conn);
+    expect(welcome.theme).toBe("animal_style");
+    expect(welcome.column).toBe("theme");
+    // The keyboard screen keeps to keys.
+    expect(keyboard.frame(112, 36)).not.toContain(" Theme ");
+    await keyboard.sequence("\x1b[C", conn);
+    expect(keyboard.column).toBe("presets");
+  } finally {
+    welcome.close();
+    keyboard.close();
+    palette.use(undefined, null);
+  }
 });

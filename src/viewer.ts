@@ -15,7 +15,9 @@ import { Openers } from "./url_opener";
 import * as sound from "./sound";
 import { sshViewer } from "./trackers/ports";
 import type { Probe } from "./host_probe";
+import * as palette from "./palette";
 import type { Rgb } from "./palette";
+import * as hostBackground from "./host_background";
 import type { Colors as TerminalColors } from "./terminal_palette";
 import type { RGB } from "./theme";
 import type { Reply, RequestInput } from "./protocol";
@@ -310,7 +312,8 @@ export async function run(
         }
         if (probe.scheme_changed) {
           probe.scheme_changed = false;
-          writeAll(probe.query());
+          // Its own background, not the one Corgi moved it to.
+          writeAll(hostBackground.release() + probe.query());
         }
         if (probe.changed) {
           await call(connection, "theme", { theme: probe.theme });
@@ -386,6 +389,8 @@ export async function run(
           view.dirty = false;
           held = previous !== frame && !ready(probe);
           if (!held) {
+            const backdrop = hostBackground.follow(palette.painted());
+            if (backdrop) writeAll(backdrop);
             if (previous !== frame) host = present(host, frame, view.width, view.height, probe.pacer);
             previous = frame;
             await presented(view);
