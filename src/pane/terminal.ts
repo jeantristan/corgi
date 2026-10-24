@@ -125,11 +125,7 @@ export class Terminal extends EventEmitter {
     n.probe_resize(master, this.cols, this.rows);
     try {
       this.child = Bun.spawn(
-        [
-          `${nativeRoot}/bin/pty-exec`,
-          shell,
-          ...(command === null ? ["-l"] : [interactive_command ? "-lic" : "-lc", command]),
-        ],
+        [`${nativeRoot}/bin/pty-exec`, shell, ...launch_command.shellArgs(command, interactive_command)],
         { cwd, env, stdin: slave, stdout: slave, stderr: slave },
       );
       this.pid = this.child.pid;

@@ -1797,7 +1797,7 @@ export class Menu {
         const picker = shellPicker.Picker.open(this.shell, this.shells);
         return [
           title("Shell for new panes"),
-          lead("New panes and splits start in this login shell."),
+          lead("New panes and splits start in this shell."),
           blank,
           ...picker.entries.map((entry, i) => {
             const used = i === picker.in_use && entry !== "other";

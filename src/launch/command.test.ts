@@ -1,5 +1,15 @@
 import { test, expect } from "bun:test";
-import { Entry, Worker, identify, wrapperBody, analyze, shell, shellStatus, installedShells } from "./command";
+import {
+  Entry,
+  Worker,
+  identify,
+  wrapperBody,
+  analyze,
+  shell,
+  shellArgs,
+  shellStatus,
+  installedShells,
+} from "./command";
 import { existsSync, readFileSync, mkdtempSync, rmSync, writeFileSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -152,6 +162,14 @@ test("panes use the configured shell, then an absolute SHELL, then the account's
       else process.env[key] = value;
     rmSync(root, { recursive: true, force: true });
   }
+});
+test("panes start login shells only on macOS", () => {
+  expect(shellArgs(null, false, "darwin")).toEqual(["-l"]);
+  expect(shellArgs("claude", false, "darwin")).toEqual(["-lc", "claude"]);
+  expect(shellArgs("ls", true, "darwin")).toEqual(["-lic", "ls"]);
+  expect(shellArgs(null, false, "linux")).toEqual([]);
+  expect(shellArgs("claude", false, "linux")).toEqual(["-c", "claude"]);
+  expect(shellArgs("ls", true, "linux")).toEqual(["-ic", "ls"]);
 });
 test("the shell status says what panes run with and without the setting", () => {
   const saved = { SHELL: process.env.SHELL, CORGI_ENV_DIR: process.env.CORGI_ENV_DIR },

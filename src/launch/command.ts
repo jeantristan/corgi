@@ -111,6 +111,14 @@ export function shell() {
   const setting = settings.shell();
   return (setting !== null ? locate(setting) : null) ?? fallback().path;
 }
+/** The shell's arguments for a pane. Like Ghostty, only macOS starts login
+ * shells, since users there keep their setup in ~/.bash_profile; elsewhere
+ * bash's login files often skip ~/.bashrc. */
+export function shellArgs(command: string | null, interactive: boolean, platform = process.platform): string[] {
+  const login = platform === "darwin" ? "l" : "";
+  if (command === null) return login ? ["-l"] : [];
+  return [`-${login}${interactive ? "i" : ""}c`, command];
+}
 export function shellStatus(): ShellStatus {
   const setting = settings.shell() ?? "",
     chosen = setting ? locate(setting) : null,
