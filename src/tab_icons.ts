@@ -14,7 +14,7 @@ import type { Cell } from "./fork_motion";
 export const cols = 2;
 const first_id = 730300;
 /** A one-color mark that would barely show on the tabs takes their ink. */
-const min_contrast = 2;
+const min_contrast = 1.5;
 let fills = new Map<Brand, { layers: Layer[]; colors: string }>();
 palette.derived(() => {
   fills = new Map();
