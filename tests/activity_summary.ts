@@ -83,7 +83,12 @@ export class Summaries extends Titles {
     return lines(this.log);
   }
   summary_logs() {
-    return lines(join(this.temp.name, "server.log"))
+    const path = join(this.temp.name, "server.log"),
+      text = existsSync(path) ? readFileSync(path, "utf8") : "";
+    // The daemon may be mid-way through writing the last line.
+    return text
+      .slice(0, text.lastIndexOf("\n") + 1)
+      .split("\n")
       .filter(line => line.startsWith("info(activity_summary): "))
       .map(line => JSON.parse(line.slice("info(activity_summary): ".length)));
   }

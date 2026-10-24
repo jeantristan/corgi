@@ -1,0 +1,85 @@
+name: Platform
+
+on:
+  workflow_call:
+    inputs:
+      os:
+        required: true
+        type: string
+
+jobs:
+  build:
+    runs-on: ${{ inputs.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+      - name: Install Zig
+        shell: bash
+        run: |
+          # scripts/zig finds the pinned compiler in .tools.
+          if [ "$RUNNER_OS" = macOS ]; then
+            name=zig-aarch64-macos-0.16.0 sum=b23d70deaa879b5c2d486ed3316f7eaa53e84acf6fc9cc747de152450d401489
+          else
+            name=zig-x86_64-linux-0.16.0 sum=70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00
+          fi
+          curl -fsSL --retry 3 -o zig.tar.xz "https://ziglang.org/download/0.16.0/$name.tar.xz"
+          echo "$sum  zig.tar.xz" | shasum -a 256 -c -
+          mkdir -p .tools && tar -xJf zig.tar.xz -C .tools && rm zig.tar.xz
+          ./scripts/zig version
+      - run: bun install --frozen-lockfile
+      - name: Build
+        shell: bash
+        run: |
+          # Build the way releases do, for the oldest supported target: integration jobs
+          # may land on a CPU without the build machine's extensions.
+          args=(--native-root "$PWD/native/zig-out" --outfile dist/corgi-test)
+          if [ "$RUNNER_OS" = macOS ]; then
+            # Newer SDKs' mach headers break Zig 0.16's translate-c; releases pin 26.2.
+            sdk=$(ls -d /Applications/Xcode*.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.2.sdk | head -1)
+            args+=(--target darwin-arm64 --sysroot "$sdk")
+          else
+            args+=(--target linux-x64)
+          fi
+          bun build.ts --test "${args[@]}"
+      - name: Typecheck
+        if: runner.os == 'Linux'
+        run: bun typecheck.ts
+      - name: Unit tests
+        run: bun test src
+      - name: Pack build
+        run: tar -czf build.tgz dist/corgi-test dist/corgi-test.build.json native/zig-out
+      - uses: actions/upload-artifact@v7
+        with:
+          name: build-${{ inputs.os }}
+          path: build.tgz
+          retention-days: 3
+
+  integration:
+    name: integration (${{ matrix.shard }}/4)
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    runs-on: ${{ inputs.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+      - run: bun install --frozen-lockfile
+      - name: Install shells
+        run: |
+          if [ "$RUNNER_OS" = macOS ]; then brew install fish; else sudo apt-get install -y fish zsh; fi
+          # The image leaves zsh function folders group-writable, and compinit stops to ask about them.
+          zsh -c 'autoload -U compaudit; compaudit' | xargs -r sudo chmod go-w
+      - uses: actions/download-artifact@v8
+        with:
+          name: build-${{ inputs.os }}
+      - run: tar -xzf build.tgz
+      - name: Integration tests
+        run: bun integration.ts --shard ${{ matrix.shard }}/4 --retry

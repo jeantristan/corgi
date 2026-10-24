@@ -2,8 +2,9 @@
 import { randomUUID } from "node:crypto";
 
 const variable = "CORGI_PROCESS_SCOPE";
-type Process = { pid: number; born: string };
-export type Report = { reaped: number[]; remaining: number[] };
+type Process = { pid: number; born: string; command: string };
+/** Each process is its pid and the start of its command line. */
+export type Report = { reaped: string[]; remaining: string[] };
 
 async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout>;
@@ -101,20 +102,26 @@ async function members(id: string, pids?: number[]): Promise<Process[]> {
   for (const line of output.split("\n")) {
     const scope = /(?:^|\s)CORGI_PROCESS_SCOPE=([^\s]*)/.exec(line)?.[1];
     if (!scope?.split(",").includes(id)) continue;
-    const match = /^\s*(\d+)\s+(\S+)\s+(\w+\s+\w+\s+\d+\s+[\d:]+\s+\d+)\s/.exec(line);
-    if (match && !match[2].includes("Z")) result.push({ pid: Number(match[1]), born: match[3] });
+    const match = /^\s*(\d+)\s+(\S+)\s+(\w+\s+\w+\s+\d+\s+[\d:]+\s+\d+)\s+(.*)$/.exec(line);
+    // ps eww appends the environment to the command line.
+    if (match && !match[2].includes("Z"))
+      result.push({ pid: Number(match[1]), born: match[3], command: match[4].slice(0, 80) });
   }
   return result;
 }
 
+function describe(process: Process) {
+  return `${process.pid} (${process.command})`;
+}
+
 async function reap(id: string, graceful: boolean): Promise<Report> {
-  const reaped = new Set<number>();
+  const reaped = new Map<number, string>();
   const signaled = new Map<number, string>();
   const start = Date.now();
   const grace = graceful ? 1000 : 0;
   for (;;) {
     const current = await members(id);
-    if (!current.length) return { reaped: [...reaped], remaining: [] };
+    if (!current.length) return { reaped: [...reaped.values()], remaining: [] };
     const elapsed = Date.now() - start;
     // A scan slowed by load can use up the budget; what it found still gets SIGKILL first.
     if (elapsed >= grace) {
@@ -128,13 +135,13 @@ async function reap(id: string, graceful: boolean): Promise<Report> {
         try {
           process.kill(member.pid, signal);
           signaled.set(member.pid, identity);
-          reaped.add(member.pid);
+          reaped.set(member.pid, describe(member));
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
         }
       }
     }
-    if (elapsed >= grace + 7000) return { reaped: [...reaped], remaining: current.map(p => p.pid) };
+    if (elapsed >= grace + 7000) return { reaped: [...reaped.values()], remaining: current.map(describe) };
     await Bun.sleep(100);
   }
 }

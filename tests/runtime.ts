@@ -145,6 +145,7 @@ export class Runtime extends TestCase {
     this.env = {
       ...this.scope.env,
       HOME: this.temp.name,
+      XDG_CONFIG_HOME: join(this.temp.name, ".config"),
       XDG_STATE_HOME: join(this.temp.name, ".local/state"),
       CODEX_HOME: join(this.temp.name, ".codex"),
       CLAUDE_CONFIG_DIR: join(this.temp.name, ".claude"),

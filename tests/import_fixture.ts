@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { EXE, JsonSocket, sleep, tempDir } from "./support";
 
@@ -30,6 +30,8 @@ export class ImportFixture {
       if (value !== undefined && !removePrefixes.some(prefix => key.startsWith(prefix))) this.env[key] = value;
     }
     for (const name of ["home", "config", "state", "bin"]) mkdirSync(join(this.root, name));
+    // Debian's zsh opens its new-user wizard in a home without startup files.
+    writeFileSync(join(this.root, "home/.zshrc"), "");
     Object.assign(this.env, {
       HOME: join(this.root, "home"),
       XDG_CONFIG_HOME: join(this.root, "config"),

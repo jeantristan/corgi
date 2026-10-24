@@ -217,7 +217,8 @@ export class Pty {
       if (result) return this.output;
       await Bun.sleep(10);
     } while (Date.now() < until);
-    throw new Error(`PTY output timed out:\n${this.output}`);
+    // The latest output says where it stalled; CI annotations cut off long messages.
+    throw new Error(`PTY output timed out:\n${this.output.slice(-2000)}`);
   }
   /** Reuse the slave PTY to inspect all flags, speeds and control characters. */
   async settings() {

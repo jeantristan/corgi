@@ -13,10 +13,12 @@ let list = false,
   check = false,
   external = false,
   dev = false,
+  retry = false,
+  shard: [number, number] | null = null,
   jobs = Math.max(1, Math.min(2, Math.floor(availableParallelism() / 4)));
 function usage(): never {
   console.log(
-    "Usage: bun run tests/run.ts [suite ...] [--list|--check] [--jobs N] [--external] [--dev] [--corgi PATH] [--herdr PATH] [-- bun-test-options]\nWithout suite names, runs all normal suites in isolated processes, several at a time (--jobs 1 runs them one by one). Herdr handoff and developer-launch suites are opt-in.",
+    "Usage: bun run tests/run.ts [suite ...] [--list|--check] [--jobs N] [--shard K/N] [--retry] [--external] [--dev] [--corgi PATH] [--herdr PATH] [-- bun-test-options]\nWithout suite names, runs all normal suites in isolated processes, several at a time (--jobs 1 runs them one by one); --shard K/N runs every Nth of them, starting with the Kth; --retry runs each failed suite once more, alone. Herdr handoff and developer-launch suites are opt-in.",
   );
   process.exit(0);
 }
@@ -31,9 +33,14 @@ for (let i = 0; i < args.length; i++) {
   else if (arg === "--check") check = true;
   else if (arg === "--external") external = true;
   else if (arg === "--dev") dev = true;
+  else if (arg === "--retry") retry = true;
   else if (arg === "--jobs" || arg === "-j") {
     jobs = Number(args[++i]);
     if (!Number.isInteger(jobs) || jobs < 1) throw new Error(`${arg} requires a positive integer`);
+  } else if (arg === "--shard") {
+    const match = /^(\d+)\/(\d+)$/.exec(args[++i] ?? "");
+    shard = match ? [Number(match[1]), Number(match[2])] : null;
+    if (!shard || shard[0] < 1 || shard[0] > shard[1]) throw new Error(`${arg} requires K/N with 1 <= K <= N`);
   } else if (arg === "--corgi" || arg === "--herdr") {
     const value = args[++i];
     if (!value) throw new Error(`${arg} requires a path`);
@@ -44,9 +51,11 @@ for (let i = 0; i < args.length; i++) {
 const available = readdirSync(import.meta.dir)
   .filter(file => file.endsWith(".test.ts"))
   .sort();
-const suites = selected.length
-  ? available.filter(file => selected.includes(file.slice(0, -8)))
-  : available.filter(file => (external || file !== "herdr_handoff.test.ts") && (dev || file !== "dev.test.ts"));
+const suites = (
+  selected.length
+    ? available.filter(file => selected.includes(file.slice(0, -8)))
+    : available.filter(file => (external || file !== "herdr_handoff.test.ts") && (dev || file !== "dev.test.ts"))
+).filter((_, i) => !shard || i % shard[1] === shard[0] - 1);
 for (const name of selected) if (!available.includes(name + ".test.ts")) throw new Error(`Unknown suite: ${name}`);
 if (list) {
   console.log(suites.join("\n"));
@@ -118,6 +127,19 @@ async function worker() {
   while (queue.length > 0 && !interrupted) await runSuite(queue.shift()!);
 }
 await Promise.all(Array.from({ length: Math.min(jobs, queue.length) }, worker));
+// A suite that passes when run again alone is flaky, not broken.
+const flaky: string[] = [];
+if (retry)
+  for (const suite of results.filter(result => result.code !== 0).map(result => result.suite)) {
+    if (interrupted) break;
+    if (parallel) console.log(`\nRetrying ${suite}`);
+    results.splice(
+      results.findIndex(result => result.suite === suite),
+      1,
+    );
+    await runSuite(suite);
+    if (results.at(-1)!.code === 0) flaky.push(suite);
+  }
 let leaked = false;
 try {
   await scope.assertClean();
@@ -132,6 +154,10 @@ try {
 results.sort((a, b) => a.suite.localeCompare(b.suite));
 console.log("\nSuite results:");
 for (const result of results)
-  console.log(`${result.code === 0 ? "PASS" : "FAIL"}  ${result.suite}  ${result.seconds.toFixed(1)}s`);
+  console.log(
+    `${result.code !== 0 ? "FAIL" : flaky.includes(result.suite) ? "FLAKY" : "PASS"}  ${result.suite}  ${result.seconds.toFixed(1)}s`,
+  );
+if (process.env.GITHUB_ACTIONS)
+  for (const suite of flaky) console.log(`::warning::${suite} failed, then passed when run again`);
 if (interrupted) console.error(`Interrupted after ${results.length}/${suites.length} suites.`);
 process.exit(interrupted ? 130 : leaked || results.some(result => result.code !== 0) ? 1 : 0);

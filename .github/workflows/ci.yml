@@ -1,0 +1,19 @@
+name: CI
+
+on:
+  push:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    uses: ./.github/workflows/platform.yml
+    with:
+      os: ubuntu-latest
+  macos:
+    uses: ./.github/workflows/platform.yml
+    with:
+      os: macos-latest
