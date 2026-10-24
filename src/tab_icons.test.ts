@@ -46,8 +46,8 @@ test("a new cell size draws the mark again, and leaving frees them all", () => {
   icons.begin();
   const big = { width: 18, height: 36 };
   expect(icons.place("vim", 3, 0, big)).toBe("");
-  expect(icons.end()).toContain("s=28,v=28,i=730309,");
-  expect(icons.clear()).toBe("\x1b_Ga=d,d=I,i=730309,q=2\x1b\\");
+  expect(icons.end()).toContain("s=28,v=28,i=730308,");
+  expect(icons.clear()).toBe("\x1b_Ga=d,d=I,i=730308,q=2\x1b\\");
   expect(icons.begin()).toBe("");
 });
 

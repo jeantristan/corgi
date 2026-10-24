@@ -19,9 +19,11 @@ test("a shell at its prompt is unnamed, and one running something is named for i
   expect(name(["bash", "deploy"])).toBe("deploy");
   expect(name(["/bin/sh", "./scripts/release.sh", "--dry-run"])).toBe("release");
   expect(name(["sh", "-c", "sleep 10; echo done"])).toBe("sh");
+  expect(name(["bash", "-e", "deploy.sh"])).toBe("deploy");
+  expect(name(["bash", "-o", "pipefail", "deploy.sh"])).toBe("deploy");
 });
 
-test("an interpreter is named for its script or module", () => {
+test("an interpreter is named for its script, module or package script", () => {
   expect(name(["node", "/opt/homebrew/bin/npm", "run", "dev"])).toBe("npm");
   expect(name(["node", "--inspect", "node_modules/vite/bin/vite.js"])).toBe("vite");
   expect(name(["node", "-r", "ts-node/register", "server.ts"])).toBe("server");
@@ -33,20 +35,41 @@ test("an interpreter is named for its script or module", () => {
     ]),
   ).toBe("manage");
   expect(name(["python3.12", "-m", "http.server", "8000"])).toBe("http.server");
+  expect(name(["python3", "-u", "-m", "pytest", "-x"])).toBe("pytest");
+  expect(name(["python", "file_name.py"])).toBe("file_name");
+  expect(name(["python3", "-I", "-W", "ignore", "file_name.py"])).toBe("file_name");
+  expect(name(["bun", "file_name.ts"])).toBe("file_name");
+  expect(name(["node", "file_name.ts"])).toBe("file_name");
+  expect(name(["node", "--", "file_name.js"])).toBe("file_name");
   expect(name(["bun", "run", "src/main.ts"])).toBe("main");
+  expect(name(["bun", "run", "dev"])).toBe("dev");
+  expect(name(["bun", "--watch", "run", "--hot", "dev"])).toBe("dev");
+  expect(name(["bun", "run", "--cwd", "packages/app", "build"])).toBe("build");
+  expect(name(["node", "run", "dev"])).toBe("dev");
+  expect(name(["node", "--run", "dev"])).toBe("dev");
   // A subcommand, inline code or a bare interpreter keeps the interpreter's name.
   expect(name(["bun", "test"])).toBe("bun");
-  expect(name(["bun", "run", "dev"])).toBe("bun");
+  expect(name(["bun", "run"])).toBe("bun");
   expect(name(["python3", "-c", "print(1)"])).toBe("python3");
+  expect(name(["node", "-m", "dev"])).toBe("node");
   expect(name(["node"])).toBe("node");
   // A program merely named like one is not an interpreter.
   expect(name(["nodemon", "server.js"])).toBe("nodemon");
 });
 
 test("a program wears its own brand, or else its interpreter's", () => {
-  expect(program(["node", "/opt/homebrew/bin/npm", "run", "dev"])).toEqual({ name: "npm", brand: "npm" });
+  expect(program(["node", "/opt/homebrew/bin/npm", "run", "dev"])).toEqual({ name: "npm", brand: "node" });
   expect(program(["node", "server.js"]).brand).toBe("node");
   expect(program(["python3.12", "-m", "http.server"]).brand).toBe("python");
+  expect(program(["python", "file_name.py"]).brand).toBe("python");
+  expect(program(["bun", "run", "dev"])).toEqual({ name: "dev", brand: "bun" });
+  expect(program(["node", "run", "dev"])).toEqual({ name: "dev", brand: "node" });
+  // A project's script, module or package script named like a branded program
+  // still wears its interpreter's brand; only an installed one wears its own.
+  expect(program(["bun", "./go.ts", "--temp"])).toEqual({ name: "go", brand: "bun" });
+  expect(program(["bun", "run", "docker"])).toEqual({ name: "docker", brand: "bun" });
+  expect(program(["python3", "-m", "git"])).toEqual({ name: "git", brand: "python" });
+  expect(program(["python3", "tools/redis.py"]).brand).toBe("python");
   expect(program(["/usr/bin/nvim", "notes.md"]).brand).toBe("neovim");
   expect(program(["codex"]).brand).toBe("openai");
   expect(program(["uv", "run", "pytest"]).brand).toBe("python");
@@ -64,7 +87,7 @@ test("a program wears its own brand, or else its interpreter's", () => {
   expect(program(["python3.12", "/opt/homebrew/bin/ipython"]).brand).toBe("python");
   expect(program(["perl", "script.pl"]).brand).toBe("perl");
   expect(program(["hh_client", "check"]).brand).toBe("hack");
-  expect(program(["node", "/opt/homebrew/bin/yarn", "dev"]).brand).toBe("npm");
+  expect(program(["node", "/opt/homebrew/bin/yarn", "dev"]).brand).toBe("node");
   for (const argv of [["-zsh"], ["bash", "deploy"], ["htop"]]) expect(program(argv).brand).toBeNull();
   // Agents' providers name theirs the same way.
   expect(brandOf("claude")).toBe("claude");

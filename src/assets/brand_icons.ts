@@ -16,7 +16,6 @@ export const art: Record<Brand, Art> = {
   hack: svg("hack"),
   perl: svg("perl"),
   r: svg("r"),
-  npm: svg("npm"),
   vim: svg("vim"),
   neovim: svg("neovim"),
   git: svg("git"),
