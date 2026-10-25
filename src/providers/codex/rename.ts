@@ -1,44 +1,19 @@
 //! Renames a Codex thread through its app server's control socket, or, when
 //! no app server serves it, by typing `/rename` into its composer.
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { createConnection } from "node:net";
+import * as socket from "./socket";
+import * as errors from "../../errors";
 import type { Terminal } from "../../pane/terminal";
-export async function rename(socket: string, id: string, name: string) {
-  await new Promise<void>((resolve, reject) => {
-    const connection = createConnection(socket),
-      request = 1;
-    let buffer = "";
-    const timer = setTimeout(() => {
-      connection.destroy();
-      reject(new Error("TimedOut"));
-    }, 3000);
-    connection.once("error", e => {
-      clearTimeout(timer);
-      reject(e);
-    });
-    connection.once("connect", () =>
-      connection.write(
-        JSON.stringify({
-          id: request,
-          method: "thread/name/set",
-          params: { threadId: id, name },
-        }) + "\n",
-      ),
-    );
-    connection.on("data", data => {
-      buffer += data;
-      for (const line of buffer.split("\n").slice(0, -1)) {
-        try {
-          const reply = JSON.parse(line);
-          if (reply.id !== request) continue;
-          clearTimeout(timer);
-          connection.destroy();
-          reply.error ? reject(new Error("RenameUnavailable")) : resolve();
-        } catch {}
-      }
-      buffer = buffer.slice(buffer.lastIndexOf("\n") + 1);
-    });
-  });
+export async function rename(path: string, id: string, name: string) {
+  const client = await socket.Client.open(path);
+  try {
+    await client.call("thread/name/set", { threadId: id, name });
+  } catch (error) {
+    if (errors.is(error, "RpcError")) throw Error("RenameUnavailable");
+    throw error;
+  } finally {
+    client.close();
+  }
 }
 export function command(name: string) {
   return "/rename " + name;
