@@ -1,5 +1,6 @@
 import { test, expect } from "bun:test";
-import { State, reply_prefix, hide, hit, place } from "./corgi_badge";
+import { State, reply_prefix, hide, hit, place, needsExplicitSize } from "./corgi_badge";
+import { Terminal } from "./pane/terminal";
 const reply = (body: string) => reply_prefix + body + "\x1b\\";
 test("badge uploads only on support or lost-image recovery", () => {
   const s = new State();
@@ -42,9 +43,9 @@ test("chunked upload with a wrong acknowledgement ID is confirmed by placement",
   s.upload(0);
   expect(s.accept(reply("i=0;OK"))).toBe(false);
   expect(s.status).toBe("uploading");
-  const out = s.upload(3000);
+  const out = s.upload(3000, { width: 9, height: 18 }, true);
   expect(s.status).toBe("confirming");
-  expect(out.includes("a=p,i=730031,p=1,c=3,z=1,C=1,q=0")).toBe(true);
+  expect(out.includes("a=p,i=730031,p=1,c=3,r=2,X=0,Y=9,z=1,C=1,q=0")).toBe(true);
   expect(out.endsWith(hide)).toBe(true);
   s.accept(reply("p=1,i=730031;OK"));
   expect(s.mode()).toBe("image");
@@ -130,4 +131,52 @@ test("successful visible placements restore the retry budget after image loss", 
     s.accept(reply("p=1,i=730031;ENOENT:missing"));
   }
   expect(s.status).toBe("supported");
+});
+
+test("badge stays square within its cells as the terminal font changes", () => {
+  const terminal = Terminal.create(20, 5);
+  try {
+    const state = new State();
+    state.accept(reply("i=730031;OK"));
+    terminal.feed(state.upload(0));
+    for (const cell of [
+      { width: 9, height: 18 },
+      { width: 8, height: 19 },
+      { width: 7, height: 24 },
+      { width: 18, height: 36 },
+      { width: 16, height: 16 },
+      { width: 20, height: 8 },
+    ]) {
+      terminal.native({ op: "pixels", start_x: cell.width, start_y: cell.height });
+      for (const explicit of [false, true]) {
+        terminal.feed(place(cell, explicit));
+        const images = terminal.surface(1).surface.images!;
+        expect(images).toHaveLength(1);
+        const image = images[0],
+          side = Math.min(3 * cell.width, 2 * cell.height);
+        expect(image.width * cell.width).toBeCloseTo(side);
+        expect(image.height * cell.height).toBeCloseTo(side);
+        expect(image.x).toBeGreaterThanOrEqual(2);
+        expect(image.x + image.width).toBeLessThanOrEqual(5);
+        expect(image.y).toBeGreaterThanOrEqual(0);
+        expect(image.y + image.height).toBeLessThanOrEqual(2);
+      }
+    }
+  } finally {
+    terminal.destroy();
+  }
+});
+
+test("without pixel measurements the terminal determines the badge's height", () => {
+  expect(place()).toContain("p=1,c=3,z=1");
+});
+
+test("Ghostty preserves badge proportions with only one dimension specified", () => {
+  for (const name of ["ghostty 1.2.3", "xterm-ghostty", "iTerm2 3.5", ""]) {
+    const explicit = needsExplicitSize(name);
+    expect(explicit).toBe(false);
+    expect(place({ width: 9, height: 18 }, explicit)).toContain("p=1,c=3,z=1");
+    expect(place({ width: 16, height: 16 }, explicit)).toContain("p=1,r=2,z=1");
+  }
+  for (const name of ["kitty(0.26.5)", "kitty 0.26.5", "xterm-kitty"]) expect(needsExplicitSize(name)).toBe(true);
 });

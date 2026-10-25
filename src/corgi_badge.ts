@@ -1,6 +1,7 @@
 //! Viewer-owned Kitty badge; unsupported hosts fall back to emoji.
 import { png_base64 } from "./assets/corgi_badge";
 import { Rect } from "./layout";
+import type { Cell } from "./fork_motion";
 const png = Buffer.from(png_base64, "base64");
 const pixel_width = png.readUInt32BE(16),
   pixel_height = png.readUInt32BE(20);
@@ -10,6 +11,10 @@ export const remove = "\x1b_Ga=d,d=I,i=730031,q=2\x1b\\";
 export const hide = "\x1b_Ga=d,d=i,i=730031,p=1,q=2\x1b\\";
 export const emoji = "🐕";
 export type Mode = "none" | "emoji" | "image";
+/** Older Kitty does not infer a missing dimension from the aspect ratio. */
+export function needsExplicitSize(terminal: string): boolean {
+  return terminal.toLowerCase().includes("kitty");
+}
 /** The image's cells, past the sidebar's box column and the lists' margin. */
 const cells = new Rect(2, 0, 3, 2);
 export function hit(mode: Mode, sidebar_width: number, x: number, y: number): boolean {
@@ -70,7 +75,7 @@ export class State {
     } else this.status = "unavailable";
     return true;
   }
-  upload(now_ms: number): string {
+  upload(now_ms: number, cell: Cell | null = null, explicit_size = false): string {
     if (this.status === "probing") {
       this.probe_deadline ??= now_ms + 1500;
       if (now_ms >= this.probe_deadline) this.status = "unavailable";
@@ -78,7 +83,7 @@ export class State {
     if (this.status === "uploading" && now_ms >= this.retry_at) {
       this.status = "confirming";
       this.retry_at = now_ms + 1500;
-      return place() + hide;
+      return place(cell, explicit_size) + hide;
     }
     if (this.status === "confirming" && now_ms >= this.retry_at)
       this.status = this.attempts < 3 ? "supported" : "unavailable";
@@ -102,6 +107,14 @@ export class State {
     return out;
   }
 }
-export function place(): string {
-  return `\x1b7\x1b[1;3H\x1b_Ga=p,i=730031,p=1,c=3,z=1,C=1,q=0\x1b\\\x1b8`;
+export function place(cell: Cell | null = null, explicit_size = false): string {
+  let size = `c=${cells.w}`;
+  if (cell && explicit_size) {
+    const side = Math.min(cells.w * cell.width, cells.h * cell.height),
+      cols = Math.ceil(side / cell.width),
+      rows = Math.ceil(side / cell.height);
+    // Old Kitty needs both dimensions. Offsets trim the cells to a square.
+    size = `c=${cols},r=${rows},X=${cols * cell.width - side},Y=${rows * cell.height - side}`;
+  } else if (cell && cells.h * cell.height < cells.w * cell.width) size = `r=${cells.h}`;
+  return `\x1b7\x1b[1;3H\x1b_Ga=p,i=730031,p=1,${size},z=1,C=1,q=0\x1b\\\x1b8`;
 }

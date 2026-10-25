@@ -266,6 +266,7 @@ export class Controller {
   menu_highlight: string | null = null;
   sidebar_open = true;
   corgi_badge: corgiBadge.Mode = "none";
+  corgi_badge_explicit_size = false;
   supports_kitty_graphics = false;
   /** The host's cell in pixels, when it reports it. */
   cell_pixels: forkMotion.Cell | null = null;
@@ -6477,6 +6478,7 @@ export class Controller {
         sidebar_open: this.sidebar_open,
         sidebar_drawer: this.sidebar_focus?.drawer ?? null,
         corgi_badge: this.corgi_badge,
+        corgi_badge_explicit_size: this.corgi_badge_explicit_size,
         supports_kitty_graphics: this.supports_kitty_graphics,
         images: this.images,
         tab_icons: this.supports_kitty_graphics ? this.tab_icons : null,

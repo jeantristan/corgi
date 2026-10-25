@@ -302,11 +302,20 @@ export async function run(
         openers.reap();
         for (const byte of probe.expire(Date.now())) input.push(byte);
         await answerClipboard(view, probe.clipboard);
-        const images = probe.badge.upload(Date.now());
+        const size = dimensions();
+        const explicit_size = corgiBadge.needsExplicitSize(
+          probe.clipboard.terminal.text() || process.env.TERM_PROGRAM || process.env.TERM || "",
+        );
+        const images = probe.badge.upload(Date.now(), size.cell, explicit_size);
         if (images.length > 0) writeAll(images);
         const badge_mode = probe.badge.mode();
-        if (view.corgi_badge !== badge_mode || view.supports_kitty_graphics !== probe.badge.supports_kitty_graphics) {
+        if (
+          view.corgi_badge !== badge_mode ||
+          view.corgi_badge_explicit_size !== explicit_size ||
+          view.supports_kitty_graphics !== probe.badge.supports_kitty_graphics
+        ) {
           view.corgi_badge = badge_mode;
+          view.corgi_badge_explicit_size = explicit_size;
           view.supports_kitty_graphics = probe.badge.supports_kitty_graphics;
           view.dirty = true;
         }
@@ -321,7 +330,6 @@ export async function run(
           view.terminal_colors = hostColors(probe);
           view.dirty = true;
         }
-        const size = dimensions();
         const cell_changed =
           view.cell_pixels?.width !== size.cell?.width || view.cell_pixels?.height !== size.cell?.height;
         view.cell_pixels = size.cell;
