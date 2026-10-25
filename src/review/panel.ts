@@ -10,6 +10,7 @@ import { Rect, type Direction } from "../layout";
 import * as palette from "../palette";
 import { codepointWidth, compactCount, Writer } from "../text";
 import * as diff from "./diff";
+import * as folding from "./folding";
 import * as funcname from "./funcname";
 import * as git from "./git";
 import * as notes from "./notes";
@@ -202,8 +203,8 @@ class Review {
   wrap = true;
   /** Opened folds per file, by anchor. */
   opened = new Map<string, Set<number>>();
-  /** Files folded to their heading on "All files". */
-  collapsed = new Set<string>();
+  /** Explicit file folding choices on "All files", overriding the defaults. */
+  collapsed = new Map<string, boolean>();
   /** Generated files whose diff was asked for. */
   loaded = new Set<string>();
   anchor: number | null = null;
@@ -222,6 +223,7 @@ class Review {
 }
 interface Listing {
   changes: git.Change[];
+  auto_collapsed: Set<string>;
   /** When each file in the working tree was last written; none for a commit. */
   edited: Map<string, number> | null;
 }
@@ -245,12 +247,10 @@ class Checkout {
 }
 /** The followed pane's review as it stands: its listing, and the selected
  * file or the one the cursor is in. */
-interface Now {
+interface Now extends Listing {
   co: Checkout;
   r: Review;
   source: git.Source;
-  changes: git.Change[];
-  edited: Map<string, number> | null;
   change: git.Change | null;
   file: Loaded | null;
 }
@@ -785,7 +785,7 @@ export class Panel {
     if (!listed) return null;
     const change = listed.changes.find(c => c.path === r.path) ?? null;
     const file = change ? (co.files.get(`${sourceKey(listed.source)}\0${change.path}`) ?? null) : null;
-    return { co, r, source: listed.source, changes: listed.changes, edited: listed.edited, change, file };
+    return { co, r, ...listed, change, file };
   }
   /** The list's rows: "All files", then a tree by name or one list newest edit first. */
   private listRows(r: Review, paths: string[], edited: Map<string, number> | null): ListRow[] {
@@ -808,7 +808,7 @@ export class Panel {
             ? null
             : (now.co.files.get(`${sourceKey(now.source)}\0${path}`) ?? null),
         d = file?.loaded.kind === "diff" ? file.loaded.diff : null,
-        collapsed = r.all && r.collapsed.has(path);
+        collapsed = this.isCollapsed(r, now, path);
       return { change, file, d, collapsed, units: d && !collapsed ? this.units(r, d, path) : [] };
     });
   }
@@ -850,13 +850,17 @@ export class Panel {
     r.path = path;
     r.cur = 0;
     r.free = false;
-    if (!r.collapsed.delete(path)) {
-      r.collapsed.add(path);
+    const collapsed = !this.isCollapsed(r, now, path);
+    r.collapsed.set(path, collapsed);
+    if (collapsed) {
       r.anchor = null;
       return;
     }
     const file = now.co.files.get(`${sourceKey(now.source)}\0${path}`);
     if (file?.loaded.kind === "diff") r.cur = this.firstChange(r, file.loaded.diff, path);
+  }
+  private isCollapsed(r: Review, now: Now, path: string): boolean {
+    return r.all && (r.collapsed.get(path) ?? now.auto_collapsed.has(path));
   }
   /** The flow's next or previous hunk, across files. A file not read yet
    * stops the walk until it is. */
@@ -1134,7 +1138,7 @@ export class Panel {
         break;
       case "enter":
       case "right": {
-        if (r.all && r.path && r.collapsed.has(r.path)) {
+        if (r.path && this.isCollapsed(r, now, r.path)) {
           this.collapse(r, now, r.path);
           break;
         }
@@ -1340,7 +1344,7 @@ export class Panel {
     if (n.rev.kind === "commit") r.pick = n.rev.hash;
     if (wanted !== r.scope) r.scope = wanted;
     if (n.path !== r.path) r.anchor = null;
-    r.collapsed.delete(n.path);
+    r.collapsed.set(n.path, false);
     r.path = n.path;
     r.part = "diff";
     r.free = false;
@@ -1430,7 +1434,7 @@ export class Panel {
       d = sections[files.get(hit.path) ?? -1]?.d;
     if (!d) return;
     let units = this.units(r, d, hit.path);
-    r.collapsed.delete(hit.path);
+    r.collapsed.set(hit.path, false);
     const fold = units.find(u => u.kind === "fold" && hit.row >= u.start && hit.row < u.end);
     if (fold) {
       this.openFold(r, hit.path, d, fold);
@@ -2675,7 +2679,7 @@ export class Panel {
       return hints([["j/k", "file"], ["enter", "open"], ["tab", "diff"], ["]", "hunk"], send, ["?", "keys"]], close);
     const d = now?.file?.loaded.kind === "diff" ? now.file.loaded.diff : null;
     const units = d && r.path ? this.units(r, d, r.path) : [];
-    if (r.all && r.path && r.collapsed.has(r.path))
+    if (now && r.path && this.isCollapsed(r, now, r.path))
       return hints([["enter", "unfold"], ["]/[", "hunk"], send, ["?", "keys"]], close);
     if (now?.change?.generated && !r.loaded.has(now.change.path))
       return hints([["enter", "load the diff"], ["f", "next file"], send, ["?", "keys"]], close);
@@ -2751,6 +2755,7 @@ async function list(root: string, source: git.Source): Promise<Listing> {
   const changes = await git.changes(root, source);
   return {
     changes,
+    auto_collapsed: folding.tests(changes),
     edited:
       source.kind === "worktree"
         ? await git.edited(

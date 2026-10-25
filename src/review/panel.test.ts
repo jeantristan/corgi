@@ -433,6 +433,98 @@ test("a file's heading folds it to its counts, and unfolds it", async () => {
   p.hide();
 });
 
+test("test diffs fold at the ratio for the current scope, and explicit choices survive refresh", async () => {
+  const p = new panel.Panel();
+  const testLines = (n: number) =>
+    write(
+      "app.test.ts",
+      lines(n, i => `test_only_${i}();`),
+    );
+  const body = () => screen(p, 70, 60).join("\n");
+  testLines(25);
+  try {
+    p.follow({ pane: 30, cwd: root, name: "Fix app" });
+    p.show();
+    await settle(p);
+    // The branch has six non-test edits, excluding the generated lockfile.
+    expect(body()).toContain("▾ A app.test.ts");
+    testLines(24);
+    await settle(p);
+    expect(body()).toContain("▸ A app.test.ts");
+    expect(body()).not.toContain("test_only_0();");
+
+    // Only four of those non-test edits are uncommitted.
+    p.showScope("uncommitted", null);
+    await settle(p);
+    expect(body()).toContain("▾ A app.test.ts");
+    p.showScope("all", null);
+    await settle(p);
+    expect(body()).toContain("▸ A app.test.ts");
+
+    key(p, "tab");
+    expect(screen(p).at(-2)).toContain("enter unfold");
+    key(p, "enter");
+    await settle(p);
+    expect(body()).toContain("▾ A app.test.ts");
+    expect(body()).toContain("test_only_0();");
+
+    key(p, "x");
+    testLines(25);
+    await settle(p);
+    expect(body()).toContain("▸ A app.test.ts");
+    key(p, "enter");
+    expect(body()).toContain("▾ A app.test.ts");
+  } finally {
+    p.hide();
+    rmSync(join(root, "app.test.ts"));
+  }
+});
+
+test("single-file view, find and note navigation reveal automatically folded tests", async () => {
+  const p = new panel.Panel();
+  write(
+    "app.test.ts",
+    lines(24, i => `test_only_${i}();`),
+  );
+  const body = () => screen(p, 70, 60).join("\n");
+  try {
+    p.follow({ pane: 31, cwd: root, name: "Fix app" });
+    p.show();
+    await settle(p);
+    expect(body()).toContain("▸ A app.test.ts");
+    const row = screen(p).findIndex(row => row.includes("app.test.ts"));
+    p.mouse("press", 10, row);
+    p.mouse("release", 10, row);
+    await settle(p);
+    expect(body()).toContain("test_only_0();");
+    p.mouse("press", 10, 3);
+    p.mouse("release", 10, 3);
+    await settle(p);
+    expect(body()).toContain("▸ A app.test.ts");
+
+    key(p, "tab");
+    key(p, "/");
+    for (const ch of "test_only_0") key(p, ch);
+    key(p, "escape");
+    await settle(p);
+    expect(body()).toContain("▾ A app.test.ts");
+    expect(body()).toContain("test_only_0();");
+
+    key(p, "c");
+    for (const ch of "check this test") key(p, ch);
+    key(p, "enter");
+    key(p, "x");
+    expect(body()).toContain("▸ A app.test.ts");
+    key(p, "n");
+    await settle(p);
+    expect(body()).toContain("▾ A app.test.ts");
+    expect(body()).toContain("check this test");
+  } finally {
+    p.hide();
+    rmSync(join(root, "app.test.ts"));
+  }
+});
+
 test("? shows every key in one box of groups over a dimmed panel, and any key closes it", async () => {
   const p = new panel.Panel();
   p.follow({ pane: 26, cwd: root, name: "Fix app" });
