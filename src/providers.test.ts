@@ -37,20 +37,26 @@ test("each provider resumes and forks a session with its own arguments", () => {
   expect(claude.adapter.launch.resume("id'with quote")).toEqual(["--resume", "id'with quote"]);
   expect(codex.adapter.launch.resume("id")).toEqual(["resume", "id"]);
   const old = "01901234-1234-1234-1234-123456789abc",
-    from = { session: old, transcript: "" },
+    from = { session: old, transcript: "", cwd: "/tmp/worktree" },
     fork = claude.adapter.launch.fork(from, "Name"),
     id = fork?.session ?? "";
   expect(fork?.args).toEqual(["--resume", old, "--fork-session", "--session-id", id, "--name", "Name"]);
   expect(id).toMatch(/^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/);
   expect(claude.adapter.launch.fork(from, null)?.args).not.toContain("--name");
-  expect(codex.adapter.launch.fork(from, "Name")).toEqual({ args: ["fork", old], session: null, named: false });
+  expect(codex.adapter.launch.fork(from, "Name")).toEqual({
+    args: ["fork", old, "--cd", from.cwd],
+    session: null,
+    named: false,
+  });
 });
 test("a conversation can be forked once it has a session and, for Claude, a transcript", () => {
   for (const p of [claude.adapter, codex.adapter])
-    expect(p.launch.fork({ session: "short", transcript: "" }, null)).toBeNull();
+    expect(p.launch.fork({ session: "short", transcript: "", cwd: "/tmp" }, null)).toBeNull();
   const session = "01901234-1234-1234-1234-123456789abc";
-  expect(claude.adapter.launch.fork({ session, transcript: "/nonexistent/transcript.jsonl" }, null)).toBeNull();
-  expect(claude.adapter.launch.fork({ session, transcript: import.meta.path }, null)).not.toBeNull();
+  expect(
+    claude.adapter.launch.fork({ session, transcript: "/nonexistent/transcript.jsonl", cwd: "/tmp" }, null),
+  ).toBeNull();
+  expect(claude.adapter.launch.fork({ session, transcript: import.meta.path, cwd: "/tmp" }, null)).not.toBeNull();
 });
 test("a bypassing launch skips each provider's permission checks", () => {
   const bypass: Settings = { permissions: "bypass", model: null, args: [] };

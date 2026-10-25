@@ -1,10 +1,10 @@
 import { createServer } from "node:net";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Viewers } from "./viewers";
 import { PALETTE, screen_text } from "./runtime";
-import { registerCase, writeExecutable } from "./support";
+import { registerCase, run, writeExecutable } from "./support";
 import { CodexObserver } from "./provider_sim";
 
 const mouse = (button: number, x: number, y: number, release = false) =>
@@ -149,6 +149,44 @@ class AgentMenu extends Viewers {
     this.assertEqual(submitted, "/rename Copy\n");
     this.codexObserver = new CodexObserver(this.env.CODEX_HOME!, [CODEX_ID, CODEX_FORK_ID]);
     await this.codexConversation(pane, CODEX_FORK_ID);
+  }
+
+  async test_a_codex_fork_starts_in_the_worktree_its_source_is_listed_under() {
+    const root = realpathSync(this.temp.name),
+      linked = join(root, "linked worktree"),
+      log = join(root, "fork.json"),
+      git = (...args: string[]) => run(["git", "-C", root, ...args], { env: this.env });
+    await git("init", "-b", "main");
+    await git("config", "user.name", "Test");
+    await git("config", "user.email", "test@example.invalid");
+    await git("-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "base");
+    await git("worktree", "add", "-b", "feature", linked);
+    const script = writeExecutable(
+      join(root, "codex"),
+      `if (process.argv.includes('fork')) require('node:fs').writeFileSync(${JSON.stringify(log)},
+        JSON.stringify({ cwd: process.cwd(), args: process.argv.slice(2) }));\n` +
+        codexScreen(join(root, "submitted.txt")),
+    );
+    this.env.CORGI_CODEX_BIN = script;
+    await this.restart_runtime();
+    await this.command("workspace.edit", { target: (await this.session()).workspaces[0].id, cwd: root });
+    this.codexObserver = new CodexObserver(this.env.CODEX_HOME!, [CODEX_ID, CODEX_FORK_ID]);
+    this.codexObserver.cwds[CODEX_ID] = root;
+    this.codexObserver.items[CODEX_ID] = [
+      { type: "fileChange", id: "edit", status: "completed", changes: [{ path: join(linked, "file") }] },
+    ];
+    const source = await this.new(script);
+    await this.codexConversation(source, CODEX_ID);
+    await this.untilAdvancing(
+      1,
+      async () =>
+        (await this.session()).workspaces[0].worktrees?.agents.find((a: any) => a.target.pane === source)?.path ===
+        linked,
+    );
+    const { pane } = await this.command("agent.fork", { target: source });
+    const launched = await this.until(() => existsSync(log) && JSON.parse(readFileSync(log, "utf8")));
+    this.assertEqual(launched, { cwd: linked, args: ["fork", CODEX_ID, "--cd", linked] });
+    this.assertEqual((await this.session()).panes.find((p: any) => p.id === pane).cwd, linked);
   }
 
   async test_claude_renames_itself_when_its_messaging_socket_asks() {

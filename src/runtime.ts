@@ -779,13 +779,13 @@ export class Runtime {
     this.changed();
   }
   /** The provider of the conversation `p` shows, and how to fork it. */
-  static forkSource(p: Pane, name: string | null = null) {
+  static forkSource(p: Pane, name: string | null = null, cwd = p.cwd) {
     const a = p.agent(),
       provider = a.provider,
       session = a.sessionId(),
       branch =
         provider && validRef({ id: session })
-          ? adapter(provider).launch.fork({ session, transcript: a.transcriptPath() }, name)
+          ? adapter(provider).launch.fork({ session, transcript: a.transcriptPath(), cwd }, name)
           : null;
     if (!provider || !branch) throw Error("NoConversation");
     return { provider, branch };
@@ -795,7 +795,7 @@ export class Runtime {
     if (name !== null && !validName(name)) throw Error("InvalidName");
     const p = this.pane(id);
     if (!p) throw Error("NoPane");
-    const { provider, branch } = Runtime.forkSource(p, name),
+    const { provider, branch } = Runtime.forkSource(p, name, opts.cwd),
       launch = p.launch ?? Launch.observed(provider, p.detection.pid),
       typed = launch.typed(branch.args, p.resume_hint),
       old = p.terminal.fadedSnapshot(),

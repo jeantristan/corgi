@@ -253,6 +253,21 @@ test("a fork starts the way its source did, copying the conversation", () => {
     "custom --model opus --resume old --name 'Two words'",
   );
 });
+test("a Codex fork explicitly selects its destination instead of the saved session's cwd", () => {
+  const { r, w } = setup();
+  try {
+    const p = add(r, w),
+      session = "11111111-1111-4111-8111-111111111111";
+    p.attachment.select(r.conversations.get("codex", session));
+    const { branch } = Runtime.forkSource(p, null, "/tmp/linked worktree");
+    expect(branch.args).toEqual(["fork", session, "--cd", "/tmp/linked worktree"]);
+    expect(new Launch({ provider: "codex" }).typed(branch.args)).toBe(
+      `codex fork ${session} --cd '/tmp/linked worktree'`,
+    );
+  } finally {
+    r.destroy();
+  }
+});
 test("a launch resumes the way it started, quoting what needs it", () => {
   expect(new Launch({ provider: "codex" }).typed(["resume", "session'quote"])).toBe("codex resume 'session'\\''quote'");
   expect(new Launch({ provider: "claude" }).typed(["--resume", "4ee5c02d-691c-4045-8744-930f330494fd"])).toBe(

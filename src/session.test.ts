@@ -7,6 +7,7 @@ import { execute, location, snapshot, viewerSnapshot } from "./session";
 import { stringify } from "./json";
 import * as worktrees from "./worktrees";
 import { parseInventory } from "./trackers/worktrees";
+import { Path } from "./bounded_text";
 const ctx = { socket: "/tmp/corgi-test", executable: "/bin/corgi", theme: {} };
 function setup() {
   const r = new Runtime(),
@@ -23,6 +24,44 @@ function pane(r: Runtime, w: Workspace, split: number | null = null) {
   return id;
 }
 const topology = (r: Runtime) => stringify(r.workspaces.items.map(w => w.model));
+test("forking uses the conversation's listed worktree, preserving a folder within it", async () => {
+  const { r, home } = setup();
+  try {
+    home.worktrees = {
+      common_dir: "/tmp/.git",
+      base: null,
+      stale: false,
+      agents: [],
+      entries: parseInventory("worktree /tmp\0\0worktree /tmp/linked\0\0"),
+    };
+    const id = pane(r, home),
+      source = r.pane(id)!,
+      actor = r.conversations.get("codex", "11111111-1111-4111-8111-111111111111");
+    source.attachment.select(actor);
+    source.cwd = "/tmp/shell";
+    const directories: string[] = [];
+    r.forkAgent = async (opts, target) => {
+      directories.push(opts.cwd);
+      return target;
+    };
+    const fork = () => execute(r, ctx, { "agent.fork": { target: id, name: null, check: false } });
+    worktrees.recordPlacement(actor.state, home.worktrees.common_dir, [
+      { target: { pane: id }, path: "/tmp/linked", source: "write", stale: false },
+    ]);
+    actor.state.cwd = new Path("/tmp");
+    await fork();
+    actor.state.cwd = new Path("/tmp/linked/src");
+    await fork();
+    worktrees.recordPlacement(actor.state, home.worktrees.common_dir, []);
+    actor.state.cwd = new Path("/tmp/agent");
+    await fork();
+    actor.state.cwd = new Path();
+    await fork();
+    expect(directories).toEqual(["/tmp/linked", "/tmp/linked/src", "/tmp/agent", "/tmp/shell"]);
+  } finally {
+    r.destroy();
+  }
+});
 test("the first snapshot places a reopened conversation without waiting for discovery", async () => {
   const { r, home } = setup();
   try {

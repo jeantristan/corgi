@@ -11,6 +11,7 @@ import { logicalKey } from "./keys";
 import { encode } from "./keyboard";
 import * as accounts from "./accounts";
 import * as integration from "./integration";
+import * as worktreeAgents from "./worktree_agents";
 import { Row } from "./launch/row";
 import type { Provider } from "./providers";
 export type Context = { socket: string; executable: string; theme: any };
@@ -194,15 +195,14 @@ async function executeInner(r: Runtime, ctx: Context, cmd: protocol.Command): Pr
         Runtime.forkSource(p);
         return location(r, request.payload.target);
       }
-      const ws = r.workspaces.owner(request.payload.target)!;
-      return location(
-        r,
-        await r.forkAgent(
-          spawnOptions(r, ctx, ws.id, request.payload.target, ""),
-          request.payload.target,
-          request.payload.name ?? null,
-        ),
+      const ws = r.workspaces.owner(request.payload.target)!,
+        opts = spawnOptions(r, ctx, ws.id, request.payload.target, "");
+      opts.cwd = worktreeAgents.folder(
+        r.worktree_tracker.snapshot(r, ws),
+        { pane: p.id },
+        p.agent().directory() || opts.cwd,
       );
+      return location(r, await r.forkAgent(opts, request.payload.target, request.payload.name ?? null));
     }
     case "pane.create":
       return location(

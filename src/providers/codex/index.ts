@@ -118,7 +118,8 @@ export const adapter: Adapter = {
     ],
     keep: c => commandLine.keep(c, keeping),
     resume: session => ["resume", session],
-    fork: ({ session }) => (session.length === 36 ? { args: ["fork", session], session: null, named: false } : null),
+    fork: ({ session, cwd }) =>
+      session.length === 36 ? { args: ["fork", session, "--cd", cwd], session: null, named: false } : null,
   },
   rename: {
     channel: async (session, connected, account) =>
