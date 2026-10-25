@@ -31,6 +31,7 @@ import * as framePacing from "./frame_pacing";
 import * as config from "./build_config";
 import * as releaseLabel from "./release_label";
 import * as bugReport from "./bug_report";
+import type { Snapshot as TerminalSnapshot } from "./terminal_info";
 import * as os from "./os";
 import { Writer, clamp, directoryLabel, displayWidth, writeEllipsis, sat } from "./text";
 import { Dialog, View as DialogView, writeField } from "./name_dialog";
@@ -526,7 +527,7 @@ export class Menu {
   /** What Report a bug says, once gathered. */
   report: bugReport.Report | null = null;
   /** What the viewer found out about its terminal, for the report. */
-  host_terminal: bugReport.Terminal | null = null;
+  host_terminal: TerminalSnapshot | null = null;
   /** The full report, where the report wrote one. */
   full_path: string | null = null;
   private gathering = false;

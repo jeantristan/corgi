@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as bugReport from "./bug_report";
-import { Collector } from "./terminal_probe";
+import * as terminal_info from "./terminal_info";
 import { status } from "./corgi_setup";
 import type { Rgb } from "./palette";
 
@@ -24,9 +24,13 @@ const modded = palette("#777777", "#555555", [
   "#444444", "#3355ff", "#888888", "#8a8a8a", "#ff3333", "#999999", "#909090", "#cccccc",
 ]); // prettier-ignore
 
+function answers(info: terminal_info.Info): bugReport.Answers {
+  return bugReport.wireTerminal({ info })!.answers;
+}
+
 function terminal(over: Partial<bugReport.Terminal> = {}): bugReport.Terminal {
-  const probe = new Collector();
-  probe.start(40, 0);
+  const probe = new terminal_info.Probe();
+  probe.measure(40, 0);
   for (const reply of [
     "\x1b[40;3R",
     "\x1b[40;2R",
@@ -48,7 +52,7 @@ function terminal(over: Partial<bugReport.Terminal> = {}): bugReport.Terminal {
     "\x1b[?62;22;52c",
   ])
     // prettier-ignore
-    expect(probe.accept(reply)).toBe(true);
+    expect(probe.feed(reply).length).toBe(0);
   return {
     source: "this viewer",
     name: "kitty(0.39.1)",
@@ -63,7 +67,7 @@ function terminal(over: Partial<bugReport.Terminal> = {}): bugReport.Terminal {
     colors: ordinary,
     tmux: null,
     ssh: false,
-    answers: probe.answers,
+    answers: answers(probe.info),
     ...over,
   };
 }
@@ -288,7 +292,7 @@ test("each size says where it came from, so a PTY without pixels never reads lik
   );
   // The theory this guards: a PTY that gives no pixels, while the terminal
   // answers for itself, must leave a different full report than one that does.
-  const answered = (pty: bugReport.Pty) => {
+  const answered = (pty: terminal_info.Pty) => {
     const t = terminal({ source: "asked directly", pty, used: null, colors: modded });
     t.answers.cell = { width: 16, height: 34 };
     return bugReport.full(report({ terminal: t }), settings, extras, new Date(0));
@@ -302,16 +306,19 @@ test("each size says where it came from, so a PTY without pixels never reads lik
 });
 
 test("a terminal that never answered says so instead of listing what it can do", () => {
-  const silent = new Collector();
-  silent.start(40, 0);
+  const silent = new terminal_info.Probe();
+  silent.measure(40, 0);
   silent.expire(5000);
-  expect(silent.done).toBe(true);
-  const text = bugReport.text(report({ terminal: terminal({ answers: silent.answers, colors: null }) }), settings);
+  expect(silent.info.status).toBe("done");
+  const text = bugReport.text(
+    report({ terminal: terminal({ answers: answers(silent.info), colors: null }) }),
+    settings,
+  );
   expect(text).toContain("  - Replies: none; it didn't answer Corgi's questions in 5s\n");
   expect(text).toContain("- Timed out: terminal\n");
   expect(text).toContain("- Colors: not reported\n");
   expect(text).not.toContain("Keyboard");
-  expect(bugReport.flagged(report({ terminal: terminal({ answers: silent.answers }) }).terminal)).toBe(true);
+  expect(bugReport.flagged(report({ terminal: terminal({ answers: answers(silent.info) }) }).terminal)).toBe(true);
 });
 
 test("the issue link fills in the report, and gives up past GitHub's limit", () => {
@@ -438,6 +445,36 @@ test("a terminal reported to the daemon comes back as it was, and junk comes bac
   expect(junk.answers.widths).toEqual([{ kind: "", text: "", expected: null, got: null }]);
 });
 
+test("a plain terminal snapshot becomes report data only when read", async () => {
+  const p = new terminal_info.Probe();
+  p.measure(30);
+  p.feed("\x1b[30;3R\x1b[6;18;9t\x1b[?62c");
+  const snapshot = await p.snapshot(
+    {
+      source: "viewer",
+      cols: 100,
+      rows: 30,
+      pty: { cols: 100, rows: 30, width: 0, height: 0 },
+      used: { width: 9, height: 18 },
+    },
+    { TERM: "xterm-kitty" },
+  );
+  const received = JSON.parse(JSON.stringify(snapshot)),
+    t = bugReport.wireTerminal(received)!;
+  expect(t.source).toBe("this viewer");
+  expect(t.measured).toBe(true);
+  expect(t.pty).toEqual(snapshot.pty);
+  expect(t.used).toEqual(snapshot.used);
+  expect(t.answers.cell).toEqual({ width: 9, height: 18 });
+  expect(t.answers.widths[0]).toEqual({ kind: "emoji", text: "👍", expected: 2, got: 2 });
+  expect(t.answers.replies[0]).toBe("\\e[30;3R");
+  expect(received.info.replies[0]).toBe("\x1b[30;3R");
+  expect(received).not.toHaveProperty("answers");
+  const direct = bugReport.wireTerminal({ ...received, source: "direct", used: null })!;
+  expect(direct.source).toBe("asked directly");
+  expect(direct.badge).toBe("");
+});
+
 test("overrides leave out what panes set themselves", () => {
   expect(
     bugReport.overrides(
@@ -552,4 +589,88 @@ test("the CLI links the prefilled issue where the terminal takes links, else nam
   expect(bugReport.hyperlinks({ TERM_PROGRAM: "tmux", TERM: "tmux-256color" }, true)).toBe(false);
   expect(bugReport.hyperlinks({ FORCE_HYPERLINK: "1" }, false)).toBe(true);
   expect(bugReport.hyperlinks({ FORCE_HYPERLINK: "0", TERM_PROGRAM: "ghostty" }, true)).toBe(false);
+});
+
+function fragmented(p: terminal_info.Probe, bytes: string) {
+  return Buffer.concat(Array.from(Buffer.from(bytes), byte => p.feed(Buffer.from([byte])))).toString();
+}
+
+test("a report reads plain terminal data and keeps its own snapshot", () => {
+  const info: terminal_info.Info = {
+    status: "done",
+    answered: true,
+    da1: [62],
+    da2: "1;2",
+    modes: { "2026": 2 },
+    keyboard: 1,
+    window: { width: 800, height: 600 },
+    cell: { width: 10, height: 20 },
+    capabilities: {
+      "kitty-query-font_family": "JetBrains Mono",
+      "kitty-query-font_size": "12",
+      Smulx: "1",
+    },
+    widths: [
+      { kind: "emoji", text: "👍", sequence: false, columns: 2 },
+      { kind: "text symbol", text: "⚠", sequence: false, columns: 1 },
+      { kind: "emoji presentation", text: "⚠️", sequence: true, columns: null },
+    ],
+    replies: ["\x1b[30;3R"],
+  };
+  const before = structuredClone(info),
+    result = answers(info);
+  expect(info).toEqual(before);
+  expect(result.font).toBe("JetBrains Mono 12pt");
+  expect(result.undercurl).toBe(true);
+  expect(result.widths[0]).toEqual({ kind: "emoji", text: "👍", expected: 2, got: 2 });
+  expect(result.widths[2].got).toBeNull();
+  expect(result.replies).toEqual(["\\e[30;3R"]);
+  const saved = structuredClone(result);
+  info.da1.push(22);
+  info.modes["2026"] = 1;
+  info.cell!.width = 15;
+  info.window!.width = 1200;
+  info.widths[0].columns = 1;
+  info.replies.push("\x1b[?62c");
+  expect(result).toEqual(saved);
+});
+
+test("terminal report answers are consumed while asked for, and keys pass through around them", () => {
+  const p = new terminal_info.Probe();
+  // Before the questions go out, the same bytes are typed input.
+  expect(p.feed("\x1b[?62;22c").toString()).toBe("\x1b[?62;22c");
+  const asked = p.measure(30);
+  expect(asked).toContain("\x1b[30;1H👍\x1b[6n");
+  expect(asked.endsWith("\x1b[c")).toBe(true);
+  const replies =
+    "\x1b[30;3R" +
+    "\x1b[?2026;2$y\x1b[?1u\x1b[4;600;800t" +
+    "\x1bP1+r6b697474792d71756572792d666f6e745f66616d696c79=4a6574427261696e73204d6f6e6f\x1b\\" +
+    "\x1bP0+r\x1b\\";
+  // Arrows, a modified F3 (a position report on the top row) and text stay input.
+  expect(fragmented(p, "a\x1b[A" + replies + "\x1b[1;5Rb")).toBe("a\x1b[A\x1b[1;5Rb");
+  expect(p.info.status).toBe("pending");
+  expect(fragmented(p, "\x1b[?62;4;22c")).toBe("");
+  expect(p.info.status).toBe("done");
+  const a = answers(p.info);
+  expect(a.widths[0]).toEqual({ kind: "emoji", text: "👍", expected: 2, got: 2 });
+  expect(a.widths[1].got).toBeNull();
+  expect(a.modes).toEqual({ "2026": 2 });
+  expect(a.keyboard).toBe(1);
+  expect(a.window).toEqual({ width: 800, height: 600 });
+  expect(a.font).toBe("JetBrains Mono");
+  expect(a.da1).toEqual([62, 4, 22]);
+  expect(a.replies[0]).toBe("\\e[30;3R");
+  // Once answered, the same replies are input again.
+  expect(p.feed("\x1b[?1u").toString()).toBe("\x1b[?1u");
+});
+test("outside Corgi the report's samples go on the cursor's line, and any row's position counts", () => {
+  const p = new terminal_info.Probe(),
+    asked = p.measure(null);
+  expect(asked.startsWith("\x1b7\r👍\x1b[6n\r⚠\x1b[6n")).toBe(true);
+  expect(asked).toContain("\r\x1b[2K\x1b8");
+  expect(fragmented(p, "\x1b[17;3R\x1b[6;18;9t\x1b[?0u\x1b[?62c")).toBe("");
+  expect(answers(p.info).widths[0].got).toBe(2);
+  expect(answers(p.info).cell).toEqual({ width: 9, height: 18 });
+  expect(answers(p.info).keyboard).toBe(0);
 });

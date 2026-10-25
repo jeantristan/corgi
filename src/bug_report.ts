@@ -28,11 +28,12 @@ import * as settingsFile from "./settings";
 import * as shellPicker from "./shell_picker";
 import * as subprocess from "./subprocess";
 import * as terminalPalette from "./terminal_palette";
-import * as terminalProbe from "./terminal_probe";
+import { displayWidth } from "./text";
 import { shellStatus } from "./launch/command";
 import { Provider, adapter } from "./providers";
 import type { Rgb } from "./palette";
 import type { Status } from "./corgi_setup";
+import type { Pty, Snapshot, Tmux } from "./terminal_info";
 
 export const issues_url = "https://github.com/tals/corgi/issues/new";
 /** GitHub turns away longer prefilled links. */
@@ -64,19 +65,6 @@ export interface System {
   shell: { path: string; version: string | null };
   agents: Agent[];
 }
-/** A PTY's window size: its cells, and its pixels, which are 0 where it gave none. */
-export interface Pty {
-  cols: number;
-  rows: number;
-  width: number;
-  height: number;
-}
-export interface Tmux {
-  version: string;
-  passthrough: string;
-  clipboard: string;
-  timed_out: boolean;
-}
 /** What a viewer found out about its terminal. */
 export interface Terminal {
   /** Where the details came from: "asked directly", "this viewer", "from viewer 2". */
@@ -100,7 +88,7 @@ export interface Terminal {
   colors: terminalPalette.Colors | null;
   tmux: Tmux | null;
   ssh: boolean;
-  answers: terminalProbe.Answers;
+  answers: Answers;
 }
 /** A running agent, for the counts. */
 export interface Session {
@@ -158,7 +146,7 @@ export interface Settings {
  * `terminal` is the reporting viewer's own, else the last-used viewer's. */
 export async function collect(
   socket: string,
-  terminal: Terminal | null,
+  terminal: Snapshot | null,
   progress: (step: string) => void = () => {},
 ): Promise<Report> {
   // A stuck daemon gets its connection closed, which would otherwise keep
@@ -190,7 +178,7 @@ export async function collect(
       const t = wireTerminal(v?.terminal);
       return t ? [{ ...t, source: `from viewer ${Number(v.id) || "?"}` }] : [];
     }),
-    own = terminal ?? viewers[0] ?? null,
+    own = wireTerminal(terminal) ?? viewers[0] ?? null,
     shell = snapshot ? shellPicker.status(snapshot.shell).path : shellStatus().path,
     [system, shell_version] = await Promise.all([
       Promise.all([os, agents]),
@@ -257,19 +245,34 @@ function daemonOf(hello: any, snapshot: any, extra: any, exe: string, others: Te
     others,
   };
 }
-/** A terminal as a viewer reported it to the daemon, or null for nothing usable. */
+/** Read terminal snapshots and older report-shaped caches at the report boundary. */
 export function wireTerminal(value: unknown): Terminal | null {
   if (!value || typeof value !== "object") return null;
   const v = value as any,
-    a = v.answers ?? {},
+    raw = !!v.info && typeof v.info === "object",
+    a = raw ? v.info : (v.answers ?? {}),
     rgb = (c: unknown): Rgb | null =>
       Array.isArray(c) && c.length === 3 && c.every(n => typeof n === "number") ? (c as Rgb) : null,
     strings = (o: unknown) =>
       Object.fromEntries(Object.entries(o && typeof o === "object" ? o : {}).filter(([, s]) => typeof s === "string"));
   const fg = rgb(v.colors?.foreground),
-    bg = rgb(v.colors?.background);
+    bg = rgb(v.colors?.background),
+    capabilities = strings(a.capabilities),
+    family = capabilities["kitty-query-font_family"],
+    size = capabilities["kitty-query-font_size"];
+  let source = typeof v.source === "string" ? v.source : "",
+    font = typeof a.font === "string" ? a.font : "";
+  switch (source) {
+    case "viewer":
+      source = "this viewer";
+      break;
+    case "direct":
+      source = "asked directly";
+      break;
+  }
+  if (raw) font = family ? `${family}${size ? ` ${size}pt` : ""}` : "";
   return {
-    source: typeof v.source === "string" ? v.source : "",
+    source,
     name: typeof v.name === "string" ? v.name : "",
     env: strings(v.env),
     cols: Number(v.cols) || 0,
@@ -286,14 +289,19 @@ export function wireTerminal(value: unknown): Terminal | null {
         : null,
     used: v.used && Number(v.used.width) > 0 ? { width: Number(v.used.width), height: Number(v.used.height) } : null,
     graphics: v.graphics === true,
-    badge: typeof v.badge === "string" ? v.badge : "none",
+    badge: raw && v.source === "direct" ? "" : typeof v.badge === "string" ? v.badge : "none",
     colors:
       fg && bg
         ? { foreground: fg, background: bg, ansi: Array.from({ length: 16 }, (_, i) => rgb(v.colors.ansi?.[i])) }
         : null,
     tmux:
       v.tmux && typeof v.tmux.version === "string"
-        ? { ...(strings(v.tmux) as unknown as Tmux), timed_out: v.tmux.timed_out === true }
+        ? {
+            version: firstLine(v.tmux.version),
+            passthrough: firstLine(typeof v.tmux.passthrough === "string" ? v.tmux.passthrough : ""),
+            clipboard: firstLine(typeof v.tmux.clipboard === "string" ? v.tmux.clipboard : ""),
+            timed_out: v.tmux.timed_out === true,
+          }
         : null,
     ssh: v.ssh === true,
     answers: {
@@ -306,18 +314,55 @@ export function wireTerminal(value: unknown): Terminal | null {
       keyboard: typeof a.keyboard === "number" ? a.keyboard : null,
       window: a.window && Number(a.window.width) > 0 ? { width: a.window.width, height: a.window.height } : null,
       cell: a.cell && Number(a.cell.width) > 0 ? { width: Number(a.cell.width), height: Number(a.cell.height) } : null,
-      font: typeof a.font === "string" ? a.font : "",
-      undercurl: a.undercurl === true,
-      widths: (Array.isArray(a.widths) ? a.widths : []).map((w: any) => ({
-        kind: String(w?.kind ?? ""),
-        text: String(w?.text ?? ""),
-        expected: typeof w?.expected === "number" ? w.expected : null,
-        got: typeof w?.got === "number" ? w.got : null,
-      })),
-      replies: (Array.isArray(a.replies) ? a.replies : []).filter((s: unknown) => typeof s === "string"),
+      font,
+      undercurl: raw ? "Smulx" in capabilities : a.undercurl === true,
+      widths: (Array.isArray(a.widths) ? a.widths : []).map((w: any) => {
+        const text = String(w?.text ?? ""),
+          got = raw ? w?.columns : w?.got;
+        let expected = typeof w?.expected === "number" ? w.expected : null;
+        if (raw) expected = w?.sequence === true ? null : displayWidth(text);
+        return { kind: String(w?.kind ?? ""), text, expected, got: typeof got === "number" ? got : null };
+      }),
+      replies: (Array.isArray(a.replies) ? a.replies : [])
+        .filter((s: unknown) => typeof s === "string")
+        .map((s: string) => (raw ? spelled(s) : s)),
     },
   };
 }
+
+export interface Width {
+  /** What the sample is, as the report names it. */
+  kind: string;
+  text: string;
+  /** As Corgi lays it out; null for a sequence, which it doesn't measure whole. */
+  expected: number | null;
+  /** As the terminal drew it; null when it didn't say. */
+  got: number | null;
+}
+/** What the terminal answered. */
+export interface Answers {
+  /** It answered the device attributes, so it saw every question. */
+  answered: boolean;
+  da1: number[];
+  da2: string;
+  /** DECRQM's answer for each mode: 1 set, 2 reset, 0 unknown. */
+  modes: Record<string, number>;
+  /** Kitty keyboard protocol flags; null without the protocol. */
+  keyboard: number | null;
+  window: { width: number; height: number } | null;
+  /** A cell in pixels, as the terminal reports it. */
+  cell: { width: number; height: number } | null;
+  font: string;
+  undercurl: boolean;
+  widths: Width[];
+  /** Each reply as it came, escapes spelled out. */
+  replies: string[];
+}
+/** A reply with its escapes spelled out, for the full report. */
+function spelled(sequence: string): string {
+  return sequence.replace(/\x1b/g, "\\e").replace(/[\x00-\x1f\x7f]/g, c => `\\x${c.charCodeAt(0).toString(16)}`);
+}
+
 /** Whether there's a terminal to ask: not in a Corgi pane, whose terminal
  * is Corgi's own, and with a terminal on both ends. */
 export function canAsk(env: Record<string, string | undefined> = process.env): boolean {
@@ -326,11 +371,11 @@ export function canAsk(env: Record<string, string | undefined> = process.env): b
 /** Asks the terminal `corgi bugreport` runs in what the viewer asks its own,
  * drawing the width samples on the cursor's line. Null in a Corgi pane,
  * whose terminal is Corgi's own, and without a terminal to ask. */
-export async function here(env: Record<string, string | undefined> = process.env): Promise<Terminal | null> {
+export async function here(env: Record<string, string | undefined> = process.env): Promise<Snapshot | null> {
   const stdin = process.stdin,
     stdout = process.stdout;
   if (!canAsk(env)) return null;
-  const [{ Probe }, corgiBadge] = await Promise.all([import("./host_probe"), import("./corgi_badge")]),
+  const [{ Probe, pty }, corgiBadge] = await Promise.all([import("./terminal_info"), import("./corgi_badge")]),
     probe = new Probe(),
     listen = (bytes: Buffer) => void probe.feed(bytes);
   stdin.setRawMode(true);
@@ -339,8 +384,8 @@ export async function here(env: Record<string, string | undefined> = process.env
   try {
     // Colors, XTVERSION and Kitty graphics first: their answers come before
     // the device attributes that end the probe's questions.
-    stdout.write(probe.query() + "\x1b[>0q" + corgiBadge.query + probe.terminal.start(null, Date.now()));
-    while (!probe.terminal.done) {
+    stdout.write(probe.query() + "\x1b[>0q" + corgiBadge.query + probe.measure(null));
+    while (probe.info.status !== "done") {
       await Bun.sleep(10);
       probe.expire(Date.now());
     }
@@ -349,38 +394,7 @@ export async function here(env: Record<string, string | undefined> = process.env
     stdin.setRawMode(false);
     stdin.pause();
   }
-  const { foreground, background, palette } = probe.theme,
-    rgb = (c: { r: number; g: number; b: number } | null): Rgb | null => (c ? [c.r, c.g, c.b] : null);
-  return {
-    source: "asked directly",
-    name: probe.clipboard.terminal.text(),
-    env: terminalEnv(env),
-    cols: stdout.columns,
-    rows: stdout.rows,
-    measured: true,
-    pty: await ptyHere(),
-    used: null,
-    graphics: probe.badge.supports_kitty_graphics,
-    badge: "",
-    colors:
-      foreground && background
-        ? { foreground: rgb(foreground)!, background: rgb(background)!, ansi: palette.map(rgb) }
-        : null,
-    tmux: await tmuxOf(env),
-    ssh: ["SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY"].some(k => !!env[k]),
-    answers: probe.terminal.answers,
-  };
-}
-/** The PTY's window size as it says it to the CLI; null where it can't. */
-async function ptyHere(): Promise<Pty | null> {
-  try {
-    const { n, ptr } = await import("./native_ffi"),
-      size = new Uint16Array(4);
-    if (n.probe_winsize_pixels(0, ptr(size)) !== 0) return null;
-    return { cols: size[0], rows: size[1], width: size[2], height: size[3] };
-  } catch {
-    return null;
-  }
+  return probe.snapshot({ source: "direct", cols: stdout.columns, rows: stdout.rows, pty: pty(), used: null }, env);
 }
 /** "200×55 cells, 3200×1870 px", or what's missing: each source on its own,
  * so a PTY that gives no pixels never reads like one that does. */
@@ -388,57 +402,13 @@ function ptyText(p: Pty | null): string {
   if (p === null) return "didn't say";
   return `${p.cols}×${p.rows} cells, ${p.width && p.height ? `${p.width}×${p.height} px` : "no pixel size"}`;
 }
-function queriedText(a: terminalProbe.Answers): string {
+function queriedText(a: Answers): string {
   const px = (s: { width: number; height: number } | null) => (s ? `${s.width}×${s.height} px` : "no answer");
   return `cell ${px(a.cell)}, window ${px(a.window)}`;
 }
 function usedText(t: Terminal): string {
   return t.used ? `${t.used.width}×${t.used.height} px per cell` : "no cell size";
 }
-/** The variables that say which terminal this is and what sits between. */
-const terminal_env = [
-  "TERM",
-  "COLORTERM",
-  "TERM_PROGRAM",
-  "TERM_PROGRAM_VERSION",
-  "LANG",
-  "LC_ALL",
-  "LC_CTYPE",
-  "TMUX",
-  "STY",
-  "ZELLIJ",
-  "SSH_CONNECTION",
-  "SSH_TTY",
-  "KITTY_WINDOW_ID",
-  "WEZTERM_PANE",
-  "VTE_VERSION",
-  "WT_SESSION",
-  "KONSOLE_VERSION",
-];
-export function terminalEnv(env: Record<string, string | undefined>): Record<string, string> {
-  return Object.fromEntries(terminal_env.flatMap(k => (env[k] ? [[k, env[k]!]] : [])));
-}
-/** tmux's version and the options that decide whether images and copies get through. */
-export async function tmuxOf(env: Record<string, string | undefined>): Promise<Tmux | null> {
-  if (!env.TMUX) return null;
-  let timed_out = false;
-  const run = async (args: string[]) => {
-    try {
-      const out = await subprocess.run(["tmux", ...args], { timeout_ms, max_output: 4096 });
-      return out.ok() ? firstLine(out.stdout.toString()) : "";
-    } catch (error) {
-      if (errors.is(error, "TimedOut")) timed_out = true;
-      return "";
-    }
-  };
-  const [version, passthrough, clipboard] = await Promise.all([
-    run(["-V"]),
-    run(["show-options", "-gqv", "allow-passthrough"]),
-    run(["show-options", "-gqv", "set-clipboard"]),
-  ]);
-  return { version, passthrough, clipboard, timed_out };
-}
-
 /** "macOS 15.1 (24B83)" or os-release's name, "Ubuntu 24.04.1 LTS". */
 async function osName(): Promise<{ name: string; timed_out: boolean }> {
   if (process.platform === "darwin") {
@@ -735,7 +705,7 @@ export function colorNotes(c: terminalPalette.Colors): string[] {
   return notes;
 }
 /** The samples the terminal drew at another width than Corgi lays them out at. */
-export function widthMismatches(t: Terminal): terminalProbe.Width[] {
+export function widthMismatches(t: Terminal): Width[] {
   return t.answers.widths.filter(w => w.expected !== null && w.got !== null && w.got !== w.expected);
 }
 /** Whether the terminal needs a closer look: the full report goes with the issue. */

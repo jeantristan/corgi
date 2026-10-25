@@ -1,10 +1,10 @@
 import { test, expect } from "bun:test";
-import { Probe } from "./host_probe";
-function fragmented(p: Probe, bytes: string) {
+import * as terminal_info from "./terminal_info";
+function fragmented(p: terminal_info.Probe, bytes: string) {
   return Buffer.concat(Array.from(Buffer.from(bytes), byte => p.feed(Buffer.from([byte])))).toString();
 }
 test("host color probe separates fragmented replies from keys and paste", () => {
-  const p = new Probe();
+  const p = new terminal_info.Probe();
   expect(fragmented(p, "hi\x1b]10;rgb:aaaa/bbbb/cccc\x1b\\\x1b]11;rgb:12/34/56\x07\x1b]4;2;rgb:1/2/3\x07!")).toBe(
     "hi!",
   );
@@ -20,12 +20,12 @@ test("host color probe separates fragmented replies from keys and paste", () => 
   expect(p.expire(p.touched + 101).toString()).toBe("\x1b");
 });
 test("a color scheme report is consumed and asks for the colors again", () => {
-  const p = new Probe();
+  const p = new terminal_info.Probe();
   expect(fragmented(p, "a\x1b[?997;1nb")).toBe("ab");
   expect(p.scheme_changed).toBe(true);
 });
 test("frame status answers are consumed across fragments but not inside pasted text", () => {
-  const p = new Probe();
+  const p = new terminal_info.Probe();
   p.pacer.stamp(0);
   expect(fragmented(p, "a\x1b[0nb")).toBe("ab");
   expect(p.pacer.stamp(10)).not.toBe("");
@@ -35,7 +35,7 @@ test("frame status answers are consumed across fragments but not inside pasted t
   expect(p.pacer.unanswered()).toBe(true);
 });
 test("badge replies are consumed across fragments but not inside pasted text", () => {
-  const p = new Probe(),
+  const p = new terminal_info.Probe(),
     reply = "\x1b_Gi=730031;OK\x1b\\";
   expect(fragmented(p, "x" + reply + "y")).toBe("xy");
   expect(p.badge.status).toBe("supported");
@@ -43,7 +43,7 @@ test("badge replies are consumed across fragments but not inside pasted text", (
   expect(p.feed(pasted).toString()).toBe(pasted);
 });
 test("graphics replies never leak into input and only matching IDs confirm the badge", () => {
-  const p = new Probe();
+  const p = new terminal_info.Probe();
   p.badge.status = "confirming";
   const wrong = "\x1b_Gi=0;OK\x1b\\",
     reply = "\x1b_Gp=1,i=730031;OK\x1b\\";
@@ -56,7 +56,7 @@ test("graphics replies never leak into input and only matching IDs confirm the b
   expect(fragmented(p, pasted)).toBe(pasted);
 });
 test("clipboard packets and their questions' answers never reach the keys", () => {
-  const p = new Probe();
+  const p = new terminal_info.Probe();
   p.clipboard.start(Date.now());
   p.clipboard.takeOutput();
   const replies =
@@ -72,7 +72,7 @@ test("clipboard packets and their questions' answers never reach the keys", () =
 });
 
 test("Moonlander image replies reach the viewer across fragments and stay out of keys and pastes", () => {
-  const p = new Probe(),
+  const p = new terminal_info.Probe(),
     reply = "\x1b_Gi=730202;OK\x1b\\";
   expect(fragmented(p, "x" + reply + "y")).toBe("xy");
   expect(p.graphics).toEqual([reply]);
@@ -80,59 +80,60 @@ test("Moonlander image replies reach the viewer across fragments and stay out of
   expect(fragmented(p, paste)).toBe(paste);
   expect(p.graphics).toEqual([reply]);
 });
-test("terminal report answers are consumed while asked for, and keys pass through around them", () => {
-  const p = new Probe();
-  // Before the questions go out, the same bytes are typed input.
-  expect(p.feed("\x1b[?62;22c").toString()).toBe("\x1b[?62;22c");
-  const asked = p.terminal.start(30, Date.now());
-  expect(asked).toContain("\x1b[30;1H👍\x1b[6n");
-  expect(asked.endsWith("\x1b[c")).toBe(true);
-  const replies =
-    "\x1b[30;3R" +
-    "\x1b[?2026;2$y\x1b[?1u\x1b[4;600;800t" +
-    "\x1bP1+r6b697474792d71756572792d666f6e745f66616d696c79=4a6574427261696e73204d6f6e6f\x1b\\" +
-    "\x1bP0+r\x1b\\";
-  // Arrows, a modified F3 (a position report on the top row) and text stay input.
-  expect(fragmented(p, "a\x1b[A" + replies + "\x1b[1;5Rb")).toBe("a\x1b[A\x1b[1;5Rb");
-  expect(p.terminal.done).toBe(false);
-  expect(fragmented(p, "\x1b[?62;4;22c")).toBe("");
-  expect(p.terminal.done).toBe(true);
-  const a = p.terminal.answers;
-  expect(a.widths[0]).toEqual({ kind: "emoji", text: "👍", expected: 2, got: 2 });
-  expect(a.widths[1].got).toBeNull();
-  expect(a.modes).toEqual({ "2026": 2 });
-  expect(a.keyboard).toBe(1);
-  expect(a.window).toEqual({ width: 800, height: 600 });
-  expect(a.font).toBe("JetBrains Mono");
-  expect(a.da1).toEqual([62, 4, 22]);
-  expect(a.replies[0]).toBe("\\e[30;3R");
-  // Once answered, the same replies are input again.
-  expect(p.feed("\x1b[?1u").toString()).toBe("\x1b[?1u");
+
+const pty = { cols: 100, rows: 30, width: 900, height: 540 };
+
+test("a terminal snapshot keeps the probe data unchanged for other clients", async () => {
+  const p = new terminal_info.Probe();
+  p.measure(30);
+  p.feed("\x1b[6;18;9t\x1b[?62c");
+  const snapshot = await p.snapshot(
+    { source: "viewer", cols: 100, rows: 30, pty, used: { width: 9, height: 18 } },
+    { TERM: "xterm-kitty", UNRELATED_SECRET: "omit" },
+  );
+  expect(snapshot.info).toBe(p.info);
+  expect(snapshot.env).toEqual({ TERM: "xterm-kitty" });
+  expect(snapshot).not.toHaveProperty("answers");
+  const received = JSON.parse(JSON.stringify(snapshot));
+  expect(received.info).toEqual(p.info);
+  expect(received.info.replies[0]).toBe("\x1b[6;18;9t");
+  expect(received.info.widths[0]).toEqual({ kind: "emoji", text: "👍", sequence: false, columns: null });
 });
-test("a terminal that never answers the report holds input only until it gives up", () => {
-  const p = new Probe(),
+
+test("terminal measurements expose parsed data without a report consumer", () => {
+  const p = new terminal_info.Probe();
+  p.measure(30);
+  const paste = "\x1b[200~\x1b[?2026;1$y\x1b[201~";
+  expect(fragmented(p, "a\x1b[30;2R" + paste + "\x1b[30;3Rb")).toBe("a" + paste + "b");
+  expect(fragmented(p, "\x1b[?2026;2$y\x1b[?0u\x1b[4;600;800t\x1b[6;20;10t\x1bP1+r536d756c78=31\x1b\\\x1b[?62c")).toBe(
+    "",
+  );
+  expect(p.info.status).toBe("done");
+  expect(p.info.answered).toBe(true);
+  expect(p.info.widths.slice(0, 2).map(sample => sample.columns)).toEqual([1, 2]);
+  expect(p.info.modes).toEqual({ "2026": 2 });
+  expect(p.info.keyboard).toBe(0);
+  expect(p.info.window).toEqual({ width: 800, height: 600 });
+  expect(p.info.cell).toEqual({ width: 10, height: 20 });
+  expect(p.info.capabilities).toEqual({ Smulx: "1" });
+  expect(p.info.replies[0]).toBe("\x1b[30;2R");
+  expect(p.info.replies).not.toContain("\x1b[?2026;1$y");
+});
+
+test("a terminal that never answers measurement queries holds input only until it gives up", () => {
+  const p = new terminal_info.Probe(),
     now = Date.now();
-  p.terminal.start(30, now);
+  p.measure(30, now);
   expect(p.feed("x\x1b[?1;2$y").toString()).toBe("x");
   p.expire(now + 5001);
-  expect(p.terminal.done).toBe(true);
-  expect(p.terminal.answers.answered).toBe(false);
+  expect(p.info.status).toBe("done");
+  expect(p.info.answered).toBe(false);
   // Answers that come late are dropped, not typed into a pane, and not
   // recorded; a modified F3 still reads as a key.
   expect(fragmented(p, "a\x1b[30;3R\x1b[?2026;2$y\x1b[1;5Rb\x1bP1+r536d756c78=31\x1b\\")).toBe("a\x1b[1;5Rb");
-  expect(p.terminal.answers.widths[0].got).toBeNull();
-  expect(p.terminal.answers.modes).toEqual({ "1": 2 });
+  expect(p.info.widths[0].columns).toBeNull();
+  expect(p.info.modes).toEqual({ "1": 2 });
   // The device attributes, asked last, end the wait.
   expect(fragmented(p, "\x1b[?62c")).toBe("");
   expect(p.feed("\x1b[30;3R").toString()).toBe("\x1b[30;3R");
-});
-test("outside Corgi the report's samples go on the cursor's line, and any row's position counts", () => {
-  const p = new Probe(),
-    asked = p.terminal.start(null, Date.now());
-  expect(asked.startsWith("\x1b7\r👍\x1b[6n\r⚠\x1b[6n")).toBe(true);
-  expect(asked).toContain("\r\x1b[2K\x1b8");
-  expect(fragmented(p, "\x1b[17;3R\x1b[6;18;9t\x1b[?0u\x1b[?62c")).toBe("");
-  expect(p.terminal.answers.widths[0].got).toBe(2);
-  expect(p.terminal.answers.cell).toEqual({ width: 9, height: 18 });
-  expect(p.terminal.answers.keyboard).toBe(0);
 });

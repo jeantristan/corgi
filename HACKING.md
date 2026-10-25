@@ -52,6 +52,14 @@ cell pixel size. The added surface fields and cell-size hint are optional, so
 wire versions and saved formats are unchanged; older viewers continue to
 receive text. `./go.ts --sandbox images` shows a picture to open cards over.
 
+`terminal_info.ts` owns live terminal state and separates replies from typed
+input. The viewer and daemon keep its plain snapshot, including `Probe.info`,
+without report formatting. `bug_report.ts` interprets that data only when a
+report is requested. Its reader also accepts the older `answers` payload.
+The cached terminal JSON now carries optional `info`; required wire fields and
+saved formats are unchanged. Older report readers still show the common
+terminal metadata but do not interpret the new measurements.
+
 The binary bundles two native shared libraries: `corgi_term` owns Ghostty
 terminal emulation, rendering, frame diffs and input encoding; `corgi_system`
 owns POSIX/PTY helpers, process inspection, resource sampling, descriptor

@@ -7,7 +7,7 @@ import { Controller } from "./controller";
 import { call, unread, acknowledge, type Transport } from "./mirror";
 import { parse as parseAction } from "./action";
 import * as corgiBadge from "./corgi_badge";
-import * as bugReport from "./bug_report";
+import * as terminal_info from "./terminal_info";
 import * as linkThumbnail from "./link_thumbnail";
 import * as forkMotion from "./fork_motion";
 import { Differ } from "./frame_diff";
@@ -15,12 +15,8 @@ import * as framePacing from "./frame_pacing";
 import { Openers } from "./url_opener";
 import * as sound from "./sound";
 import { sshViewer } from "./trackers/ports";
-import type { Probe } from "./host_probe";
 import * as palette from "./palette";
-import type { Rgb } from "./palette";
 import * as hostBackground from "./host_background";
-import type { Colors as TerminalColors } from "./terminal_palette";
-import type { RGB } from "./theme";
 import type { Reply, RequestInput } from "./protocol";
 import * as protocol from "./protocol";
 import type { State as ClipboardState } from "./host_clipboard";
@@ -244,7 +240,7 @@ class Poll {
 export async function run(
   connection: Transport,
   socket: string,
-  probe: Probe,
+  probe: terminal_info.Probe,
   input: number[],
   start_onboarding: boolean,
   stdin: Stdin,
@@ -263,7 +259,7 @@ export async function run(
     probe.clipboard.folder = join(dirname(socket) || ".", "paste");
     view.host_clipboard = probe.clipboard;
     view.host_pacer = probe.pacer;
-    view.terminal_colors = hostColors(probe);
+    view.terminal_colors = probe.colors();
     probe.clipboard.start(Date.now());
     const openers = new Openers();
     let previous = "";
@@ -273,9 +269,9 @@ export async function run(
     let held = false;
     probe.badge = new corgiBadge.State();
     writeAll(corgiBadge.query);
-    // What a bug report says about this terminal, asked once.
+    // Measure the host terminal once on attachment.
     const probed_at = Date.now();
-    writeAll(probe.terminal.start(dimensions().rows, probed_at));
+    writeAll(probe.measure(dimensions().rows, probed_at));
     let terminal_sent = false;
     // Opened once the first sync names this viewer.
     let waker: Socket | null = null;
@@ -325,9 +321,13 @@ export async function run(
           view.dirty = true;
         }
         // Sent once the answers are in and the badge knows how it draws.
-        if (!terminal_sent && probe.terminal.done && (probe.badge.mode() !== "none" || Date.now() - probed_at > 3000)) {
+        if (
+          !terminal_sent &&
+          probe.info.status === "done" &&
+          (probe.badge.mode() !== "none" || Date.now() - probed_at > 3000)
+        ) {
           terminal_sent = true;
-          void reportTerminal(view, connection, probe).catch(() => {});
+          void publishTerminal(view, connection, probe).catch(() => {});
         }
         if (probe.scheme_changed) {
           probe.scheme_changed = false;
@@ -337,7 +337,7 @@ export async function run(
         if (probe.changed) {
           await call(connection, "theme", { theme: probe.theme });
           probe.changed = false;
-          view.terminal_colors = hostColors(probe);
+          view.terminal_colors = probe.colors();
           view.dirty = true;
         }
         const cell_changed =
@@ -489,7 +489,7 @@ function present(host: Differ | null, frame: string, cols: number, rows: number,
 }
 /** Whether the host takes a frame now: its terminal has room, and over a
  * slow link it has drawn the frames before. */
-function ready(probe: Probe): boolean {
+function ready(probe: terminal_info.Probe): boolean {
   return !probe.pacer.waiting(Date.now()) && writable();
 }
 /** Whether the terminal takes output now. Linux reports no output queue for
@@ -544,47 +544,32 @@ function watch(socket: string, viewer: number, woken: () => void, closed: () => 
     return null;
   }
 }
-/** Keeps what the probe found for setup's Report a bug and tells the daemon,
- * for `corgi bugreport`; an older daemon doesn't take it. */
-async function reportTerminal(view: Controller, connection: Transport, probe: Probe): Promise<void> {
-  const size = dimensions(),
-    terminal: bugReport.Terminal = {
-      source: "this viewer",
-      name: probe.clipboard.terminal.text(),
-      env: bugReport.terminalEnv(process.env),
-      cols: size.cols,
-      rows: size.rows,
-      measured: true,
-      pty: size.pty,
-      used: view.cell_pixels,
-      graphics: probe.badge.supports_kitty_graphics,
-      badge: probe.badge.mode(),
-      colors: hostColors(probe),
-      tmux: await bugReport.tmuxOf(process.env),
-      ssh: sshViewer(),
-      answers: probe.terminal.answers,
-    };
+/** Publish terminal measurements for the UI and other clients to read. */
+async function publishTerminal(view: Controller, connection: Transport, probe: terminal_info.Probe): Promise<void> {
+  const { cols, rows, pty } = dimensions(),
+    terminal = await probe.snapshot({ source: "viewer", cols, rows, pty, used: view.cell_pixels });
   view.host_terminal = terminal;
   await call(connection, "viewer.terminal", { terminal });
-}
-/** The host's colors, when it answered the probe with its foreground and background. */
-function hostColors(probe: Probe): TerminalColors | null {
-  const { foreground, background, palette } = probe.theme,
-    rgb = (c: RGB | null): Rgb | null => (c ? [c.r, c.g, c.b] : null);
-  if (!foreground || !background) return null;
-  return { foreground: rgb(foreground)!, background: rgb(background)!, ansi: palette.map(rgb) };
 }
 function dimensions(): {
   cols: number;
   rows: number;
   cell: forkMotion.Cell | null;
   /** The window size as the PTY said it, before any of it was used; null when it couldn't say. */
-  pty: bugReport.Pty | null;
+  pty: terminal_info.Pty | null;
 } {
-  const size = new Uint16Array(4),
-    said = n.probe_winsize_pixels(0, ptr(size)) === 0;
-  if (!said) size.fill(0);
-  const [ws_col, ws_row, ws_xpixel, ws_ypixel] = size;
+  const pty = terminal_info.pty(),
+    {
+      cols: ws_col,
+      rows: ws_row,
+      width: ws_xpixel,
+      height: ws_ypixel,
+    } = pty ?? {
+      cols: 0,
+      rows: 0,
+      width: 0,
+      height: 0,
+    };
   // Terminals that report pixels pad under a cell, so this is the cell.
   const cell =
     ws_col === 0 || ws_row === 0 || ws_xpixel < ws_col || ws_ypixel < ws_row
@@ -594,7 +579,7 @@ function dimensions(): {
     cols: ws_col === 0 ? 100 : Math.min(Math.max(ws_col, 10), 500),
     rows: ws_row === 0 ? 30 : Math.min(Math.max(ws_row, 4), 200),
     cell,
-    pty: said ? { cols: ws_col, rows: ws_row, width: ws_xpixel, height: ws_ypixel } : null,
+    pty,
   };
 }
 /** Whether a terminal by this name draws Kitty's branch drawing characters:

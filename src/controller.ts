@@ -12,7 +12,7 @@ import * as onboarding from "./onboarding";
 import * as shortcutHelp from "./shortcut_help";
 import * as palette from "./palette";
 import type { Colors as TerminalColors } from "./terminal_palette";
-import type { Terminal as BugTerminal } from "./bug_report";
+import type { Snapshot as TerminalSnapshot } from "./terminal_info";
 import {
   Rect,
   View as LayoutView,
@@ -269,7 +269,7 @@ export class Controller {
   corgi_badge: corgiBadge.Mode = "none";
   corgi_badge_explicit_size = false;
   /** What the viewer found out about its terminal, once it has. */
-  host_terminal: BugTerminal | null = null;
+  host_terminal: TerminalSnapshot | null = null;
   supports_kitty_graphics = false;
   /** The host's cell in pixels, when it reports it. */
   cell_pixels: forkMotion.Cell | null = null;

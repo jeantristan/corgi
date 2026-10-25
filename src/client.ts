@@ -2,7 +2,7 @@
 import { Connection } from "./rpc";
 import { run, writeAll, Stdin } from "./viewer";
 import { runTest } from "./viewer_test";
-import { Probe } from "./host_probe";
+import * as terminal_info from "./terminal_info";
 import * as keyboard from "./keyboard";
 import * as hostBackground from "./host_background";
 import * as crash from "./crash";
@@ -75,7 +75,7 @@ async function attachOnce(path: string, start_onboarding: boolean, folder: strin
   try {
     process.stdin.setRawMode(true);
     const input: number[] = [];
-    const probe = new Probe();
+    const probe = new terminal_info.Probe();
     // The host's colors, read before the first frame so panes match it.
     writeAll(probe.query());
     await stdin.collect(
