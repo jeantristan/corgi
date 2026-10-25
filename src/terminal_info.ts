@@ -128,6 +128,7 @@ export class Probe {
   private late_until = 0;
   private width_row = 0;
   private next_width = 0;
+  size = new Size();
   changed = false;
   /** The terminal reported a new color scheme; its colors need asking again. */
   scheme_changed = false;
@@ -217,11 +218,12 @@ export class Probe {
         }
         if (sequence.length < 128) return;
       }
-      if (this.acceptInfo(sequence)) {
+      const sized = this.size.accept(sequence);
+      if (this.acceptInfo(sequence) || sized) {
         this.pending = "";
         return;
       }
-      if (this.wantsInfo(sequence)) return;
+      if (this.wantsInfo(sequence) || this.size.wants(sequence)) return;
       if (sequence === frame_pacing.answer) {
         this.pacer.answered(now);
         this.pending = "";
@@ -236,6 +238,8 @@ export class Probe {
         version_prefix,
         scheme_prefix,
         frame_pacing.answer,
+        "\x1b[4;",
+        "\x1b[6;",
       ];
       if (prefixes.some(prefix => prefix.startsWith(sequence))) return;
       if (prefixes.slice(0, 3).some(prefix => sequence.startsWith(prefix))) {
@@ -288,7 +292,7 @@ export class Probe {
       width_samples.map(({ text }) => `${at}${text}\x1b[6n`).join("") +
       `${at}\x1b[2K\x1b8` +
       modes.map(mode => `\x1b[?${mode}$p`).join("") +
-      "\x1b[?u\x1b[14t\x1b[16t" +
+      "\x1b[?u" +
       caps.map(cap => `\x1bP+q${hex(cap)}\x1b\\`).join("") +
       "\x1b[c"
     );
@@ -367,6 +371,55 @@ export interface Pty {
   rows: number;
   width: number;
   height: number;
+}
+
+const size_query = "\x1b[14t\x1b[16t";
+
+function valid(cell: Cell | null): cell is Cell {
+  return cell !== null && [cell.width, cell.height].every(n => Number.isSafeInteger(n) && n > 0 && n <= 1024);
+}
+
+function divided(p: Pty | null): Cell | null {
+  if (!p || p.cols <= 0 || p.rows <= 0) return null;
+  const cell = { width: Math.floor(p.width / p.cols), height: Math.floor(p.height / p.rows) };
+  return valid(cell) ? cell : null;
+}
+
+export class Size {
+  private key = "";
+  private asked = false;
+  private cell: Cell | null = null;
+  private window: Cell | null = null;
+
+  /** Ask again after a resize, including a font change with the same grid. */
+  update(pty: Pty | null, resized = false): string {
+    const key = JSON.stringify(pty);
+    if (this.asked && key === this.key && !resized) return "";
+    this.key = key;
+    this.asked = true;
+    this.cell = this.window = null;
+    return size_query;
+  }
+
+  wants(sequence: string): boolean {
+    return this.asked && /^\x1b\[[46];[\d;]*$/.test(sequence) && sequence.length < 64;
+  }
+
+  /** Keep late replies out of pane input and let them enable raster drawing. */
+  accept(sequence: string): boolean {
+    if (!this.asked) return false;
+    const m = /^\x1b\[([46]);(\d+);(\d+)t$/.exec(sequence);
+    if (!m) return false;
+    const size = { width: Number(m[3]), height: Number(m[2]) };
+    if (m[1] === "6") this.cell = size;
+    else this.window = size;
+    return true;
+  }
+
+  pixels(pty: Pty | null): Cell | null {
+    if (valid(this.cell)) return this.cell;
+    return divided(pty) ?? (this.window && pty ? divided({ ...pty, ...this.window }) : null);
+  }
 }
 
 /** The variables that say which terminal this is and what sits between. */

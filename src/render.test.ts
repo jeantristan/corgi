@@ -515,7 +515,12 @@ function testDrawsAt(bytes: string, position: string, text: string): boolean {
 
 test("badge redraw preserves cached pixels and shifts only the workspace heading", () => {
   const view = emptyView();
-  const u = ui({ message: "", copy_mode: false, corgi_badge: "image" });
+  const u = ui({ message: "", copy_mode: false, corgi_badge: "pending" });
+  const pending = frame(view, [], 100, 30, u);
+  expect(pending).not.toContain(corgiBadge.emoji);
+  expect(pending).not.toContain("\x1b_G");
+  expect(testDrawsAt(pending, "\x1b[1;7H", "workspaces")).toBe(true);
+  u.corgi_badge = "image";
   const shown = frame(view, [], 100, 30, u);
   expect(shown).not.toContain("\x1b[2J");
   expect(shown).toContain("\x1b[H\x1b[J");
@@ -523,9 +528,8 @@ test("badge redraw preserves cached pixels and shifts only the workspace heading
   expect(shown).not.toContain(corgiBadge.hide);
   expect(shown).not.toContain("a=t,");
   u.cell_pixels = { width: 9, height: 18 };
-  expect(frame(view, [], 100, 30, u)).toContain("p=1,c=3,z=1");
-  u.corgi_badge_explicit_size = true;
-  expect(frame(view, [], 100, 30, u)).toContain("c=3,r=2,X=0,Y=9,z=1");
+  expect(frame(view, [], 100, 30, u)).toContain("p=1,z=1,C=1");
+  expect(frame(view, [], 100, 30, u)).not.toMatch(/[,;][cr]=/);
   expect(testDrawsAt(shown, "\x1b[1;7H", "workspaces")).toBe(true);
   u.pointer = { x: 2, y: 0 };
   u.link_tooltip = true;

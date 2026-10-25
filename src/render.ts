@@ -170,7 +170,6 @@ export interface Ui {
   /** The folded sidebar's list that shows as a drawer over the panes. */
   sidebar_drawer: Section | null;
   corgi_badge: corgiBadge.Mode;
-  corgi_badge_explicit_size: boolean;
   supports_kitty_graphics: boolean;
   images: Images | null;
   /** The brand marks the host holds for untitled tabs, where it shows Kitty images. */
@@ -244,7 +243,6 @@ export function ui(fields: Partial<Ui> & { message: string; copy_mode: boolean }
     sidebar_open: true,
     sidebar_drawer: null,
     corgi_badge: "none",
-    corgi_badge_explicit_size: false,
     supports_kitty_graphics: false,
     images: null,
     tab_icons: null,
@@ -827,11 +825,7 @@ export function frame(view: LayoutView, panes: Pane[], width: number, height: nu
   if (u.git_hover !== null) sidebar.drawGitAction(w, side, u.workspaces, u.git_hover);
   if (u.review_draw) u.review_draw(w);
   if (u.corgi_badge === "image") {
-    w.write(
-      side.width > 0 && !badgeCovered(u, side, width, height)
-        ? corgiBadge.place(u.cell_pixels, u.corgi_badge_explicit_size)
-        : corgiBadge.hide,
-    );
+    w.write(side.width > 0 && !badgeCovered(u, side, width, height) ? corgiBadge.place() : corgiBadge.hide);
   }
   const paste_at = u.paste_card ? placeCard(view, panes, area, u.paste_card, u) : null;
   if (paste_at && u.pointer && pasteCard.linkAt(u.paste_card!, paste_at, u.pointer.x, u.pointer.y)) link_pointer = true;

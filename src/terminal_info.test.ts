@@ -42,8 +42,12 @@ test("badge replies are consumed across fragments but not inside pasted text", (
   const pasted = "\x1b[200~" + reply + "\x1b[201~";
   expect(p.feed(pasted).toString()).toBe(pasted);
 });
-test("graphics replies never leak into input and only matching IDs confirm the badge", () => {
+test("graphics replies never leak into input and only matching IDs confirm the badge", async () => {
   const p = new terminal_info.Probe();
+  p.badge.accept("\x1b_Gi=730031;OK\x1b\\");
+  p.badge.upload(0, { width: 9, height: 18 });
+  await p.badge.loading;
+  p.badge.upload(0, { width: 9, height: 18 });
   p.badge.status = "confirming";
   const wrong = "\x1b_Gi=0;OK\x1b\\",
     reply = "\x1b_Gp=1,i=730031;OK\x1b\\";
@@ -82,6 +86,7 @@ test("Moonlander image replies reach the viewer across fragments and stay out of
 });
 
 const pty = { cols: 100, rows: 30, width: 900, height: 540 };
+const missing = { ...pty, width: 0, height: 0 };
 
 test("a terminal snapshot keeps the probe data unchanged for other clients", async () => {
   const p = new terminal_info.Probe();
@@ -120,6 +125,35 @@ test("terminal measurements expose parsed data without a report consumer", () =>
   expect(p.info.replies).not.toContain("\x1b[?2026;1$y");
 });
 
+test("cell pixels use a direct answer over PTY metadata, with independent fallbacks", () => {
+  const size = new terminal_info.Size();
+  expect(size.update(pty)).toBe("\x1b[14t\x1b[16t");
+  expect(size.pixels(pty)).toEqual({ width: 9, height: 18 });
+  expect(size.pixels(missing)).toBeNull();
+  size.accept("\x1b[4;600;1000t");
+  expect(size.pixels(missing)).toEqual({ width: 10, height: 20 });
+  size.accept("\x1b[6;22;11t");
+  expect(size.pixels(pty)).toEqual({ width: 11, height: 22 });
+  expect(size.pixels(null)).toEqual({ width: 11, height: 22 });
+  for (const reply of ["\x1b[6;0;0t", "\x1b[6;999999999999999999;9t"]) {
+    size.accept(reply);
+    expect(size.pixels(pty)).toEqual({ width: 9, height: 18 });
+  }
+});
+
+test("resizing discards old query measurements and asks again even with unchanged PTY metadata", () => {
+  const size = new terminal_info.Size();
+  size.update(missing);
+  size.accept("\x1b[6;18;9t");
+  expect(size.update(missing)).toBe("");
+  expect(size.update(missing, true)).toBe("\x1b[14t\x1b[16t");
+  expect(size.pixels(missing)).toBeNull();
+  size.accept("\x1b[6;36;18t");
+  expect(size.pixels(missing)).toEqual({ width: 18, height: 36 });
+  expect(size.update({ ...missing, cols: 50 })).toBe("\x1b[14t\x1b[16t");
+  expect(size.pixels(missing)).toBeNull();
+});
+
 test("a terminal that never answers measurement queries holds input only until it gives up", () => {
   const p = new terminal_info.Probe(),
     now = Date.now();
@@ -136,4 +170,20 @@ test("a terminal that never answers measurement queries holds input only until i
   // The device attributes, asked last, end the wait.
   expect(fragmented(p, "\x1b[?62c")).toBe("");
   expect(p.feed("\x1b[30;3R").toString()).toBe("\x1b[30;3R");
+});
+
+test("late and fragmented size replies reach rendering without becoming pane input", () => {
+  const probe = new terminal_info.Probe(),
+    missing = { cols: 100, rows: 30, width: 0, height: 0 };
+  probe.size.update(missing);
+  probe.measure(30);
+  probe.feed("\x1b[?62c");
+  expect(probe.info.status).toBe("done");
+  const output = [...Buffer.from("a\x1b[6;18;9tb")].map(byte => probe.feed(Buffer.from([byte])));
+  expect(Buffer.concat(output).toString()).toBe("ab");
+  expect(probe.size.pixels(missing)).toEqual({ width: 9, height: 18 });
+  const paste = "\x1b[200~\x1b[6;36;18t\x1b[201~";
+  expect(probe.feed(paste).toString()).toBe(paste);
+  expect(probe.size.pixels(missing)).toEqual({ width: 9, height: 18 });
+  expect(probe.feed("\x1b[4;2~").toString()).toBe("\x1b[4;2~");
 });

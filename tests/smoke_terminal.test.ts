@@ -60,7 +60,28 @@ process.stdin.on("data", () => process.stdout.write("\\x1b_Ga=d,d=A,q=2\\x1b\\\\
     this.assertNotIn("\x1b_Ga=p,i=268435456", this.client.state.data);
   }
 
-  async test_kitty_badge_confirms_chunked_upload_after_wrong_id_acknowledgement() {
+  async test_badge_startup_paints_before_probe_without_flashing_emoji() {
+    await this.open_pane({ command: "printf BADGE_STARTUP_READY; sleep 30" });
+    const pty = await Pty.spawn([EXE, "attach"], {
+      env: this.env,
+      cwd: this.temp.name,
+      cols: 100,
+      rows: 30,
+    });
+    this.pty = pty;
+    // The pane and heading paint before the terminal answers any probes.
+    await pty.waitFor("BADGE_STARTUP_READY");
+    this.assertIn("workspaces", pty.output);
+    this.assertNotIn("🐕", pty.output);
+    pty.write("\x1b_Gi=730031;OK\x1b\\\x1b[6;18;9t\x1b[?62c");
+    await pty.waitFor("\x1b_Ga=t,t=d,f=100,s=27,v=27,i=730031");
+    this.assertNotIn("🐕", pty.output);
+    pty.write("\x1b_Gi=730031;OK\x1b\\");
+    await pty.waitFor("\x1b_Ga=p,i=730031,p=1,z=1,C=1,q=0");
+    this.assertNotIn("🐕", pty.output);
+  }
+
+  async test_kitty_badge_waits_for_cell_size_and_confirms_a_wrong_id_acknowledgement() {
     const received = join(this.temp.name, "badge-input");
     await this.open_pane({
       command: `stty -echo; printf INPUT_READY; IFS= read -r line; printf %s "$line" > ${quote(received)}; sleep 30`,
@@ -74,11 +95,24 @@ process.stdin.on("data", () => process.stdout.write("\\x1b_Ga=d,d=A,q=2\\x1b\\\\
     this.pty = pty;
     await pty.waitFor("\x1b_Ga=q,i=730031");
     await pty.waitFor("INPUT_READY");
-    pty.write("\x1b_Gi=730031;OK\x1b\\");
-    await pty.waitFor("\x1b_Gm=0;");
-    // Styling becomes available as soon as the capability probe succeeds.
+    await pty.waitFor("\x1b[16t");
+    pty.write("\x1b_Gi=730031;OK\x1b\\\x1b[?62c");
+    // The PTY has no pixels. Graphics support alone must not upload images.
+    await this.until(async () =>
+      (await this.rpc({ op: "bugreport" })).viewers.some((v: any) => v.terminal?.graphics && v.terminal.used === null),
+    );
+    const terminal = (await this.rpc({ op: "bugreport" })).viewers.find((v: any) => v.terminal?.graphics).terminal;
+    this.assertEqual(terminal.source, "viewer");
+    this.assertEqual(terminal.info.answered, true);
+    this.assertIn("\x1b[?62c", terminal.info.replies);
+    this.assertEqual("answers" in terminal, false);
+    this.assertNotIn("\x1b_Ga=t,", pty.output);
+    this.assertIn("🐕", pty.output);
+    // A late direct measurement enables every raster feature without leaking into pane input.
+    pty.write("\x1b[6;18;9t");
+    await pty.waitFor("\x1b_Ga=t,t=d,f=100,s=27,v=27,i=730031");
     await pty.waitFor(`\x1b[0;38;2;${PALETTE.accent};48;2;${PALETTE.selected}m▌`);
-    const placement = "\x1b_Ga=p,i=730031,p=1,c=3,z=1,C=1,q=";
+    const placement = "\x1b_Ga=p,i=730031,p=1,z=1,C=1,q=";
     this.assertNotIn(placement, pty.output);
     // Simulate iTerm2's final-chunk acknowledgement, then its reordered
     // placement response. The viewer must recover without another upload.

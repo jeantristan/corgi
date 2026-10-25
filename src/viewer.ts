@@ -9,6 +9,7 @@ import { parse as parseAction } from "./action";
 import * as corgiBadge from "./corgi_badge";
 import * as terminal_info from "./terminal_info";
 import * as linkThumbnail from "./link_thumbnail";
+import * as rowGlide from "./row_glide";
 import * as forkMotion from "./fork_motion";
 import { Differ } from "./frame_diff";
 import * as framePacing from "./frame_pacing";
@@ -267,11 +268,13 @@ export async function run(
     // The host has not taken the last output yet (a slow SSH link): later
     // frames wait, and the next one written carries all their changes.
     let held = false;
-    probe.badge = new corgiBadge.State();
+    probe.badge = new corgiBadge.State(() => view.wake?.());
+    probe.size = new terminal_info.Size();
     writeAll(corgiBadge.query);
     // Measure the host terminal once on attachment.
-    const probed_at = Date.now();
-    writeAll(probe.measure(dimensions().rows, probed_at));
+    const probed_at = Date.now(),
+      initial_size = dimensions();
+    writeAll(probe.size.update(initial_size.pty) + probe.measure(initial_size.rows, probed_at));
     let terminal_sent = false;
     // Opened once the first sync names this viewer.
     let waker: Socket | null = null;
@@ -293,6 +296,12 @@ export async function run(
     };
     const poll = new Poll();
     view.wake = () => poll.notify("host");
+    let resized = false;
+    const onResize = () => {
+      resized = true;
+      poll.notify("host");
+    };
+    process.on("SIGWINCH", onResize);
     stdin.listen(bytes => {
       for (const byte of probe.feed(bytes, Date.now())) input.push(byte);
       poll.notify(framePacing.onlyAnswers(bytes) ? "host" : "stdin");
@@ -304,30 +313,25 @@ export async function run(
         for (const byte of probe.expire(Date.now())) input.push(byte);
         await answerClipboard(view, probe.clipboard);
         const size = dimensions();
-        const explicit_size = corgiBadge.needsExplicitSize(
-          probe.clipboard.terminal.text() || process.env.TERM_PROGRAM || process.env.TERM || "",
-        );
-        const images = probe.badge.upload(Date.now(), size.cell, explicit_size);
+        const query = probe.size.update(size.pty, resized);
+        resized = false;
+        if (query) writeAll(query);
+        const cell = probe.size.pixels(size.pty),
+          graphics = probe.badge.supports_kitty_graphics && cell !== null;
+        const images = probe.badge.upload(Date.now(), graphics ? cell : null);
         if (images.length > 0) writeAll(images);
         const badge_mode = probe.badge.mode();
-        if (
-          view.corgi_badge !== badge_mode ||
-          view.corgi_badge_explicit_size !== explicit_size ||
-          view.supports_kitty_graphics !== probe.badge.supports_kitty_graphics
-        ) {
-          view.corgi_badge = badge_mode;
-          view.corgi_badge_explicit_size = explicit_size;
-          view.supports_kitty_graphics = probe.badge.supports_kitty_graphics;
-          view.dirty = true;
+        if (view.supports_kitty_graphics && !graphics) {
+          writeAll(rowGlide.hide + linkThumbnail.hide);
+          if (view.name_dialog?.hero.motion) {
+            writeAll(forkMotion.remove);
+            view.name_dialog.hero.motion = null;
+          }
         }
-        // Sent once the answers are in and the badge knows how it draws.
-        if (
-          !terminal_sent &&
-          probe.info.status === "done" &&
-          (probe.badge.mode() !== "none" || Date.now() - probed_at > 3000)
-        ) {
-          terminal_sent = true;
-          void publishTerminal(view, connection, probe).catch(() => {});
+        if (view.corgi_badge !== badge_mode || view.supports_kitty_graphics !== graphics) {
+          view.corgi_badge = badge_mode;
+          view.supports_kitty_graphics = graphics;
+          view.dirty = true;
         }
         if (probe.scheme_changed) {
           probe.scheme_changed = false;
@@ -340,9 +344,17 @@ export async function run(
           view.terminal_colors = probe.colors();
           view.dirty = true;
         }
-        const cell_changed =
-          view.cell_pixels?.width !== size.cell?.width || view.cell_pixels?.height !== size.cell?.height;
-        view.cell_pixels = size.cell;
+        const cell_changed = view.cell_pixels?.width !== cell?.width || view.cell_pixels?.height !== cell?.height;
+        view.cell_pixels = cell;
+        // Sent once the answers and the first image upload have settled.
+        if (
+          !terminal_sent &&
+          probe.info.status === "done" &&
+          (badge_mode === "image" || Date.now() - probed_at > 3000)
+        ) {
+          terminal_sent = true;
+          void publishTerminal(view, connection, probe).catch(() => {});
+        }
         // Over SSH, TERM may not name the terminal; XTVERSION does.
         if (branchGlyphs(probe.clipboard.terminal.text())) view.branch_glyphs = true;
         if (view.width !== size.cols || view.height !== size.rows || cell_changed) {
@@ -451,6 +463,7 @@ export async function run(
       }
       return null;
     } finally {
+      process.off("SIGWINCH", onResize);
       view.saveAgentScroll();
       // The last frame's answer would otherwise reach the shell as typing.
       const until = Date.now() + framePacing.settle_ms;
@@ -546,39 +559,22 @@ function watch(socket: string, viewer: number, woken: () => void, closed: () => 
 }
 /** Publish terminal measurements for the UI and other clients to read. */
 async function publishTerminal(view: Controller, connection: Transport, probe: terminal_info.Probe): Promise<void> {
-  const { cols, rows, pty } = dimensions(),
-    terminal = await probe.snapshot({ source: "viewer", cols, rows, pty, used: view.cell_pixels });
+  const terminal = await probe.snapshot({ source: "viewer", ...dimensions(), used: view.cell_pixels });
   view.host_terminal = terminal;
   await call(connection, "viewer.terminal", { terminal });
 }
 function dimensions(): {
   cols: number;
   rows: number;
-  cell: forkMotion.Cell | null;
   /** The window size as the PTY said it, before any of it was used; null when it couldn't say. */
   pty: terminal_info.Pty | null;
 } {
   const pty = terminal_info.pty(),
-    {
-      cols: ws_col,
-      rows: ws_row,
-      width: ws_xpixel,
-      height: ws_ypixel,
-    } = pty ?? {
-      cols: 0,
-      rows: 0,
-      width: 0,
-      height: 0,
-    };
-  // Terminals that report pixels pad under a cell, so this is the cell.
-  const cell =
-    ws_col === 0 || ws_row === 0 || ws_xpixel < ws_col || ws_ypixel < ws_row
-      ? null
-      : { width: Math.floor(ws_xpixel / ws_col), height: Math.floor(ws_ypixel / ws_row) };
+    cols = pty?.cols ?? 0,
+    rows = pty?.rows ?? 0;
   return {
-    cols: ws_col === 0 ? 100 : Math.min(Math.max(ws_col, 10), 500),
-    rows: ws_row === 0 ? 30 : Math.min(Math.max(ws_row, 4), 200),
-    cell,
+    cols: cols === 0 ? 100 : Math.min(Math.max(cols, 10), 500),
+    rows: rows === 0 ? 30 : Math.min(Math.max(rows, 4), 200),
     pty,
   };
 }

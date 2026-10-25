@@ -83,7 +83,7 @@ export interface Terminal {
   /** The cell in pixels Corgi drew with; null where it had none, or outside a viewer. */
   used: { width: number; height: number } | null;
   graphics: boolean;
-  /** How the sidebar's corgi badge drew: "image", "emoji" or "none". */
+  /** How the sidebar's corgi badge drew: "image", "emoji", "pending" or "none". */
   badge: string;
   colors: terminalPalette.Colors | null;
   tmux: Tmux | null;
@@ -384,7 +384,7 @@ export async function here(env: Record<string, string | undefined> = process.env
   try {
     // Colors, XTVERSION and Kitty graphics first: their answers come before
     // the device attributes that end the probe's questions.
-    stdout.write(probe.query() + "\x1b[>0q" + corgiBadge.query + probe.measure(null));
+    stdout.write(probe.query() + "\x1b[>0q" + corgiBadge.query + probe.size.update(pty()) + probe.measure(null));
     while (probe.info.status !== "done") {
       await Bun.sleep(10);
       probe.expire(Date.now());

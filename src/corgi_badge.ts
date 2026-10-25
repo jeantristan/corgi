@@ -3,18 +3,12 @@ import { png_base64 } from "./assets/corgi_badge";
 import { Rect } from "./layout";
 import type { Cell } from "./fork_motion";
 const png = Buffer.from(png_base64, "base64");
-const pixel_width = png.readUInt32BE(16),
-  pixel_height = png.readUInt32BE(20);
 export const reply_prefix = "\x1b_G";
 export const query = "\x1b_Ga=q,i=730031,t=d,f=24,s=1,v=1;AAAA\x1b\\";
 export const remove = "\x1b_Ga=d,d=I,i=730031,q=2\x1b\\";
 export const hide = "\x1b_Ga=d,d=i,i=730031,p=1,q=2\x1b\\";
 export const emoji = "🐕";
-export type Mode = "none" | "emoji" | "image";
-/** Older Kitty does not infer a missing dimension from the aspect ratio. */
-export function needsExplicitSize(terminal: string): boolean {
-  return terminal.toLowerCase().includes("kitty");
-}
+export type Mode = "none" | "pending" | "emoji" | "image";
 /** The image's cells, past the sidebar's box column and the lists' margin. */
 const cells = new Rect(2, 0, 3, 2);
 export function hit(mode: Mode, sidebar_width: number, x: number, y: number): boolean {
@@ -33,8 +27,12 @@ export class State {
   retry_at = 0;
   attempts = 0;
   probe_deadline: number | null = null;
+  private image: { side: number; png: Buffer | null } | null = null;
+  loading: Promise<void> | null = null;
+  constructor(private wake: () => void = () => {}) {}
   mode(): Mode {
-    return this.status === "ready" ? "image" : this.uploaded || this.status === "unavailable" ? "emoji" : "none";
+    if (this.status === "ready" && this.image?.png) return "image";
+    return this.status === "unavailable" ? "emoji" : "pending";
   }
   accept(sequence: string): boolean {
     if (!sequence.startsWith(reply_prefix) || !sequence.endsWith("\x1b\\")) return false;
@@ -75,27 +73,52 @@ export class State {
     } else this.status = "unavailable";
     return true;
   }
-  upload(now_ms: number, cell: Cell | null = null, explicit_size = false): string {
-    if (this.status === "probing") {
-      this.probe_deadline ??= now_ms + 1500;
-      if (now_ms >= this.probe_deadline) this.status = "unavailable";
+  upload(now_ms: number, cell: Cell | null): string {
+    const side = cell ? Math.min(cells.w * cell.width, cells.h * cell.height) : null;
+    let out = "";
+    if (side !== (this.image?.side ?? null)) {
+      if (this.uploaded) out = hide;
+      this.image = side === null ? null : { side, png: null };
+      this.loading = null;
+      if (this.supports_kitty_graphics) this.status = "supported";
+      this.retry_at = this.attempts = 0;
     }
+    this.probe_deadline ??= now_ms + 1500;
+    if ((this.status === "probing" || !this.image) && now_ms >= this.probe_deadline) this.status = "unavailable";
+    if (!this.image) return out;
+    if (this.status === "supported" && !this.loading) {
+      const image = this.image;
+      this.loading = new Bun.Image(png)
+        .resize(image.side, image.side)
+        .png()
+        .buffer()
+        .then(bytes => {
+          if (this.image !== image) return;
+          image.png = bytes;
+          this.wake();
+        })
+        .catch(() => {
+          if (this.image !== image) return;
+          this.status = "unavailable";
+          this.wake();
+        });
+    }
+    if (!this.image.png) return out;
     if (this.status === "uploading" && now_ms >= this.retry_at) {
       this.status = "confirming";
       this.retry_at = now_ms + 1500;
-      return place(cell, explicit_size) + hide;
+      return out + place() + hide;
     }
     if (this.status === "confirming" && now_ms >= this.retry_at)
       this.status = this.attempts < 3 ? "supported" : "unavailable";
-    if (this.status !== "supported" || now_ms < this.retry_at) return "";
-    const data = png.toString("base64");
-    let out = "";
+    if (this.status !== "supported" || now_ms < this.retry_at) return out;
+    const data = this.image.png.toString("base64");
     for (let offset = 0; offset < data.length; offset += 4096) {
       const end = Math.min(offset + 4096, data.length),
         more = Number(end < data.length);
       out +=
         (offset === 0
-          ? `\x1b_Ga=t,t=d,f=100,s=${pixel_width},v=${pixel_height},i=730031,m=${more};`
+          ? `\x1b_Ga=t,t=d,f=100,s=${this.image.side},v=${this.image.side},i=730031,m=${more};`
           : `\x1b_Gm=${more};`) +
         data.slice(offset, end) +
         "\x1b\\";
@@ -107,14 +130,6 @@ export class State {
     return out;
   }
 }
-export function place(cell: Cell | null = null, explicit_size = false): string {
-  let size = `c=${cells.w}`;
-  if (cell && explicit_size) {
-    const side = Math.min(cells.w * cell.width, cells.h * cell.height),
-      cols = Math.ceil(side / cell.width),
-      rows = Math.ceil(side / cell.height);
-    // Old Kitty needs both dimensions. Offsets trim the cells to a square.
-    size = `c=${cols},r=${rows},X=${cols * cell.width - side},Y=${rows * cell.height - side}`;
-  } else if (cell && cells.h * cell.height < cells.w * cell.width) size = `r=${cells.h}`;
-  return `\x1b7\x1b[1;3H\x1b_Ga=p,i=730031,p=1,${size},z=1,C=1,q=0\x1b\\\x1b8`;
+export function place(): string {
+  return "\x1b7\x1b[1;3H\x1b_Ga=p,i=730031,p=1,z=1,C=1,q=0\x1b\\\x1b8";
 }
