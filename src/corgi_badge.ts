@@ -29,7 +29,7 @@ export class State {
   attempts = 0;
   probe_deadline: number | null = null;
   mode(): Mode {
-    return this.status === "ready" ? "image" : this.status === "unavailable" ? "emoji" : "none";
+    return this.status === "ready" ? "image" : this.uploaded || this.status === "unavailable" ? "emoji" : "none";
   }
   accept(sequence: string): boolean {
     if (!sequence.startsWith(reply_prefix) || !sequence.endsWith("\x1b\\")) return false;
@@ -60,10 +60,10 @@ export class State {
       this.supports_kitty_graphics = true;
       if (this.status === "probing" || (this.status === "unavailable" && !this.uploaded)) this.status = "supported";
       else if (this.status === "uploading" || this.status === "confirming") this.status = "ready";
-      if (this.status === "ready") {
-        this.attempts = 0;
-        this.retry_at = 0;
-      }
+      // Only the visible placement restores retries. The confirmation probe
+      // is hidden immediately, which some hosts treat as deleting its data.
+      else if (this.status === "ready" && placement === 1) this.attempts = 0;
+      if (this.status === "ready") this.retry_at = 0;
     } else if ((this.status === "ready" || this.status === "confirming") && message.startsWith("ENOENT")) {
       this.status = this.attempts < 3 ? "supported" : "unavailable";
       this.retry_at = 0;
@@ -78,7 +78,7 @@ export class State {
     if (this.status === "uploading" && now_ms >= this.retry_at) {
       this.status = "confirming";
       this.retry_at = now_ms + 1500;
-      return placementCommand(0) + hide;
+      return place() + hide;
     }
     if (this.status === "confirming" && now_ms >= this.retry_at)
       this.status = this.attempts < 3 ? "supported" : "unavailable";
@@ -102,9 +102,6 @@ export class State {
     return out;
   }
 }
-function placementCommand(quiet: number): string {
-  return `\x1b7\x1b[1;3H\x1b_Ga=p,i=730031,p=1,c=3,z=1,C=1,q=${quiet}\x1b\\\x1b8`;
-}
 export function place(): string {
-  return placementCommand(1);
+  return `\x1b7\x1b[1;3H\x1b_Ga=p,i=730031,p=1,c=3,z=1,C=1,q=0\x1b\\\x1b8`;
 }

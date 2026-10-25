@@ -79,14 +79,14 @@ process.stdin.on("data", () => process.stdout.write("\\x1b_Ga=d,d=A,q=2\\x1b\\\\
     // Styling becomes available as soon as the capability probe succeeds.
     await pty.waitFor(`\x1b[0;38;2;${PALETTE.accent};48;2;${PALETTE.selected}m▌`);
     const placement = "\x1b_Ga=p,i=730031,p=1,c=3,z=1,C=1,q=";
-    this.assertNotIn(placement + "1", pty.output);
+    this.assertNotIn(placement, pty.output);
     // Simulate iTerm2's final-chunk acknowledgement, then its reordered
     // placement response. The viewer must recover without another upload.
     pty.write("\x1b_Gi=0;OK\x1b\\");
     await pty.waitFor(placement + "0");
     const offset = pty.output.length;
     pty.write("\x1b_Gp=1,i=730031;OK\x1b\\");
-    await pty.waitFor(output => output.slice(offset).includes(placement + "1"));
+    await pty.waitFor(output => output.slice(offset).includes(placement + "0"));
     this.assertEqual(pty.output.split("\x1b_Ga=t,").length - 1, 1);
     pty.write("badge-input-ok\r");
     await this.until(() => existsSync(received));

@@ -825,8 +825,7 @@ export function frame(view: LayoutView, panes: Pane[], width: number, height: nu
   if (u.git_hover !== null) sidebar.drawGitAction(w, side, u.workspaces, u.git_hover);
   if (u.review_draw) u.review_draw(w);
   if (u.corgi_badge === "image") {
-    w.write(corgiBadge.hide);
-    if (side.width > 0 && !badgeCovered(u, side, width, height)) w.write(corgiBadge.place());
+    w.write(side.width > 0 && !badgeCovered(u, side, width, height) ? corgiBadge.place() : corgiBadge.hide);
   }
   const paste_at = u.paste_card ? placeCard(view, panes, area, u.paste_card, u) : null;
   if (paste_at && u.pointer && pasteCard.linkAt(u.paste_card!, paste_at, u.pointer.x, u.pointer.y)) link_pointer = true;

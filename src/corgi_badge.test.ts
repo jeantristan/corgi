@@ -91,3 +91,43 @@ test("placement missing-image replies retry only a bounded number of uploads", (
   expect(s.mode()).toBe("emoji");
   expect(s.supports_kitty_graphics).toBe(true);
 });
+test("successful uploads do not reset failed placement retries", () => {
+  const s = new State();
+  s.accept(reply("i=730031;OK"));
+  for (let i = 0; i < 3; i++) {
+    expect(s.upload(i * 100).length).toBeGreaterThan(100);
+    expect(s.mode()).toBe("emoji");
+    s.accept(reply("i=730031;OK"));
+    expect(s.mode()).toBe("image");
+    s.accept(reply("p=1,i=730031;ENOENT:missing"));
+    expect(s.mode()).toBe("emoji");
+  }
+  expect(s.upload(1000)).toBe("");
+  expect(s.status).toBe("unavailable");
+  expect(s.supports_kitty_graphics).toBe(true);
+});
+test("a hidden confirmation probe does not reset failed visible placements", () => {
+  const s = new State();
+  s.accept(reply("i=730031;OK"));
+  for (let i = 0; i < 3; i++) {
+    expect(s.upload(i * 3000).length).toBeGreaterThan(100);
+    expect(s.upload(i * 3000 + 3000)).toContain(hide);
+    s.accept(reply("p=1,i=730031;OK"));
+    s.accept(reply("p=1,i=730031;ENOENT:missing"));
+  }
+  expect(s.upload(10000)).toBe("");
+  expect(s.mode()).toBe("emoji");
+});
+test("successful visible placements restore the retry budget after image loss", () => {
+  const s = new State();
+  s.accept(reply("i=730031;OK"));
+  for (let i = 0; i < 8; i++) {
+    expect(s.upload(i * 100).length).toBeGreaterThan(100);
+    s.accept(reply("i=730031;OK"));
+    expect(place()).toContain("q=0");
+    s.accept(reply("p=1,i=730031;OK"));
+    expect(s.mode()).toBe("image");
+    s.accept(reply("p=1,i=730031;ENOENT:missing"));
+  }
+  expect(s.status).toBe("supported");
+});

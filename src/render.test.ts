@@ -520,6 +520,7 @@ test("badge redraw preserves cached pixels and shifts only the workspace heading
   expect(shown).not.toContain("\x1b[2J");
   expect(shown).toContain("\x1b[H\x1b[J");
   expect(shown).toContain("a=p,i=730031");
+  expect(shown).not.toContain(corgiBadge.hide);
   expect(shown).not.toContain("a=t,");
   expect(testDrawsAt(shown, "\x1b[1;7H", "workspaces")).toBe(true);
   u.pointer = { x: 2, y: 0 };
@@ -533,6 +534,7 @@ test("badge redraw preserves cached pixels and shifts only the workspace heading
   const popup = frame(view, [], 100, 30, u);
   expect(popup).toContain("New agent");
   expect(popup).toContain("a=p,i=730031");
+  expect(popup).not.toContain(corgiBadge.hide);
   expect(popup).not.toContain("a=t,");
   u.agent_launcher = null;
   // The scope menu opens below the workspaces, clear of the badge.

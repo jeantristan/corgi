@@ -114,7 +114,7 @@ test("the sidebar's moving and fading tint no longer resends its text", () => {
     ]) {
       const out = render(d, frame(y, alpha));
       expect(out).toContain("a=T");
-      expect(out).toContain("a=d,d=I");
+      expect(out).toContain("a=d,d=i");
       expect(out).not.toContain("unchanged text");
       expect(out).not.toContain("x".repeat(110));
     }

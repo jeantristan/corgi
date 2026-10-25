@@ -17,8 +17,8 @@ const strength = 0.2,
   /** The row's text fades in from halfway through the glide, over this long. */
   reveal_ms = 170;
 const image_id = 730120;
-/** Removes the tint. A frame that shows it sends it again. */
-export const hide = `\x1b7\x1b[1;1H\x1b_Ga=d,d=I,i=${image_id},q=2\x1b\\\x1b8`;
+/** Hides the tint. Freeing it also discards unrelated unplaced images on old Kitty. */
+export const hide = `\x1b7\x1b[1;1H\x1b_Ga=d,d=i,i=${image_id},q=2\x1b\\\x1b8`;
 
 const clamp01 = (x: number) => Math.min(1, Math.max(0, x));
 function ease(x: number) {

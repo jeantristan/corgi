@@ -2,6 +2,7 @@ import { test, expect } from "bun:test";
 import { inflateSync } from "node:zlib";
 import * as rowGlide from "./row_glide";
 import { colors } from "./palette";
+import { Terminal } from "./pane/terminal";
 const cell = { width: 10, height: 20 };
 test("the tint glides to where the row lands and fades there, and the row shows as it arrives", () => {
   expect(rowGlide.position(4, 9, 0)).toBe(4);
@@ -34,4 +35,16 @@ test("the tint is placed by the pixel under the text and cut to the list", () =>
   expect(rowGlide.place(0, 19.5, 30, 2, clip, 0.2, cell)).toContain(",Y=10,y=0,h=10,");
   expect(rowGlide.place(0, 0, 30, 2, clip, 0.2, cell)).toBe("");
   expect(rowGlide.place(0, 5, 30, 2, clip, 0, cell)).toBe("");
+});
+test("hiding the tint retains its cached image data", () => {
+  const terminal = new Terminal(100, 30);
+  try {
+    terminal.feed(rowGlide.place(0, 4, 30, 2, { top: 3, bottom: 20 }, 0.2, cell));
+    terminal.feed(rowGlide.hide);
+    terminal.feed("\x1b_Ga=p,i=730120,p=1,C=1,q=0\x1b\\");
+    const reply = Buffer.from(terminal.native({ op: "takePending" })).toString();
+    expect(reply).toBe("\x1b_Gi=730120,p=1;OK\x1b\\");
+  } finally {
+    terminal.destroy();
+  }
 });
