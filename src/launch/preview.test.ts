@@ -1,5 +1,6 @@
 import { test, expect, beforeEach, afterEach, setSystemTime } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import type { FSWatcher } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { Option, Worker, active_every, idle_every } from "./preview";
@@ -45,6 +46,26 @@ function listed(names: string[]) {
   accounts.reset();
 }
 const turn = () => new Promise<void>(resolve => setImmediate(resolve));
+/** Observe a probe event before testing a change through this watcher. */
+async function waitForWatcher(watcher: FSWatcher, directory: string, deadline: number) {
+  const name = `.watch-ready-${crypto.randomUUID()}`,
+    probe = join(directory, name);
+  let ready = false;
+  const changed = (_event: string, file: string | Buffer | null) => {
+    if (file?.toString() === name) ready = true;
+  };
+  watcher.on("change", changed);
+  try {
+    while (!ready && performance.now() < deadline) {
+      writeFileSync(probe, "");
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+    expect(ready).toBe(true);
+  } finally {
+    watcher.off("change", changed);
+    rmSync(probe, { force: true });
+  }
+}
 test("a launch preview names the model it shows and where it came from", () => {
   const o = new Option();
   o.setModel("opus", "Project");
@@ -86,11 +107,12 @@ test("a launch preview reads a provider again as soon as a file it reads changes
     worker.preview(root);
     await worker.pump();
     expect(worker.preview(root).options.pi.model.text()).toBe("first");
+    const deadline = performance.now() + 3000;
+    await waitForWatcher(worker.watching.get(file)!, root, deadline);
     // Replaced, as editors and atomic writers do, rather than written in place.
     writeFileSync(file + ".tmp", JSON.stringify({ model: "second" }));
     renameSync(file + ".tmp", file);
-    const deadline = Date.now() + 3000;
-    while (worker.preview(root).options.pi.model.text() !== "second" && Date.now() < deadline) {
+    while (worker.preview(root).options.pi.model.text() !== "second" && performance.now() < deadline) {
       await new Promise(resolve => setTimeout(resolve, 20));
       await worker.pump();
     }
