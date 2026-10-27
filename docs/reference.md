@@ -9,6 +9,8 @@ building and working on Corgi are covered in [HACKING](../HACKING.md).
 Run `corgi` to start or attach. `corgi onboard` reopens setup; inside Corgi,
 click the corgi badge or press **prefix i**. Choose a shortcut preset and a
 Ctrl+B or Ctrl+A prefix. The cmux preset is available on macOS.
+The AZERTY preset is the Corgi one plus **Ctrl+←** and **Ctrl+→** for the
+previous and next tab, for keyboards where the digits need Shift.
 
 **prefix** means press the prefix, release it, then press the next key.
 Press it twice to send it to the program. **prefix ?** opens the current
@@ -73,57 +75,57 @@ This is the table printed by `corgi keys`. Keys without `prefix` are held
 with their modifiers. In resize mode, `h/j/k/l` resize and another key exits.
 tmux tab numbering starts at zero; other presets start at one.
 
-| Action | Corgi | tmux | Herdr | cmux |
-| --- | --- | --- | --- | --- |
-| New tab (agent picker) | `prefix c`, `Ctrl+T` | `prefix c` | `prefix c` | `Cmd+T`, `prefix c` |
-| Next tab | `prefix n` | `prefix n` | `prefix n` | `Cmd+Shift+]`, `prefix n` |
-| Previous tab | `prefix p` | `prefix p` | `prefix p` | `Cmd+Shift+[`, `prefix p` |
-| Select tab | `prefix 1–9` | `prefix 0–9` | `prefix 1–9` | `Ctrl+1–9`, `prefix 1–9` |
-| Rename tab | `prefix T`, `prefix ,` | `prefix ,` | `prefix T` | `Cmd+R`, `prefix T`, `prefix ,` |
-| Close tab | `prefix X` | `prefix &` | `prefix X` | `prefix X` |
-| New workspace | `prefix N` | `prefix N` | `prefix N` | `Cmd+N`, `prefix N` |
-| Edit workspace | `prefix W` | `prefix $` | `prefix W` | `Cmd+Shift+R`, `prefix W` |
-| Next workspace | `prefix }` | `prefix }` | `prefix }` | `prefix }` |
-| Previous workspace | `prefix {` | `prefix {` | `prefix {` | `prefix {` |
-| Choose workspace | `prefix w` | `prefix s` | `prefix w`, `prefix g` | `Cmd+P`, `prefix w` |
-| Select workspace |  |  |  | `Cmd+1–9` |
-| Close workspace |  |  | `prefix D` | `Cmd+Shift+W` |
-| Find agent | `prefix g` | `prefix G` | `prefix f` | `Cmd+Shift+P`, `prefix g` |
-| Choose agent | `prefix a` |  |  | `prefix a` |
-| Next agent | `prefix ]` |  |  | `prefix ]` |
-| Previous agent | `prefix [` |  |  | `prefix [` |
-| Last visited agent | `prefix Tab` |  |  | `prefix Tab` |
-| Jump to attention | `prefix f`, `F1` | `prefix F` | `prefix o` | `Cmd+Shift+U`, `prefix f` |
-| New agent | `prefix A`, `prefix Ctrl+A` | `prefix a` | `prefix a` | `prefix A`, `prefix Ctrl+A` |
-| Mute / unmute sounds | `prefix m` | `prefix m` | `prefix m` | `prefix m` |
-| Focus left | `prefix ←`, `prefix h` | `prefix ←` | `prefix h` | `Cmd+Opt+←`, `prefix ←`, `prefix h` |
-| Focus down | `prefix ↓`, `prefix j` | `prefix ↓` | `prefix j` | `Cmd+Opt+↓`, `prefix ↓`, `prefix j` |
-| Focus up | `prefix ↑`, `prefix k` | `prefix ↑` | `prefix k` | `Cmd+Opt+↑`, `prefix ↑`, `prefix k` |
-| Focus right | `prefix →`, `prefix l` | `prefix →` | `prefix l` | `Cmd+Opt+→`, `prefix →`, `prefix l` |
-| Swap left | `prefix H`, `prefix Shift+←` |  | `prefix H` | `prefix H`, `prefix Shift+←` |
-| Swap down | `prefix J`, `prefix Shift+↓` |  | `prefix J` | `prefix J`, `prefix Shift+↓` |
-| Swap up | `prefix K`, `prefix Shift+↑` |  | `prefix K` | `prefix K`, `prefix Shift+↑` |
-| Swap right | `prefix L`, `prefix Shift+→` |  | `prefix L` | `prefix L`, `prefix Shift+→` |
-| Next pane |  | `prefix o` | `prefix Tab` |  |
-| Previous pane |  |  | `prefix Shift+Tab` |  |
-| Split right | `prefix v`, `prefix %` | `prefix %` | `prefix v` | `Cmd+D`, `prefix v`, `prefix %` |
-| Split down | `prefix -`, `prefix "` | `prefix "` | `prefix -` | `Cmd+Shift+D`, `prefix -`, `prefix "` |
-| Resize mode | `prefix r` |  | `prefix r` | `prefix r` |
-| Resize left |  | `prefix Ctrl+←` |  | `Ctrl+Shift+H` |
-| Resize down |  | `prefix Ctrl+↓` |  | `Ctrl+Shift+J` |
-| Resize up |  | `prefix Ctrl+↑` |  | `Ctrl+Shift+K` |
-| Resize right |  | `prefix Ctrl+→` |  | `Ctrl+Shift+L` |
-| Zoom / unzoom pane | `prefix z` | `prefix z` | `prefix z` | `Cmd+Shift+Enter`, `prefix z` |
-| Move pane to a new tab | `prefix !` | `prefix !` | `prefix !` | `prefix !` |
-| Close pane | `prefix x` | `prefix x` | `prefix x` | `Cmd+W`, `prefix x` |
-| Reopen last closed agent | `prefix u`, `Ctrl+Shift+T`, `Cmd+Shift+T` | `prefix u` | `prefix u` | `Cmd+Shift+T`, `prefix u` |
-| Scroll / copy mode | `prefix s` | `prefix [` | `prefix [` | `Cmd+Shift+M`, `prefix s` |
-| Paste copied text |  | `prefix ]` |  |  |
-| Detach | `prefix q`, `prefix d` | `prefix d` | `prefix q` | `prefix q`, `prefix d` |
-| Toggle sidebar | `prefix b` | `prefix b` | `prefix b` | `Cmd+B`, `prefix b` |
-| Review changes | `prefix e` | `prefix e` | `prefix e` | `prefix e` |
-| Setup | `prefix i`, `prefix C` | `prefix C` | `prefix s` | `Cmd+,`, `prefix i`, `prefix C` |
-| All shortcuts | `prefix ?` | `prefix ?` | `prefix ?` | `prefix ?` |
+| Action | Corgi | AZERTY | tmux | Herdr | cmux |
+| --- | --- | --- | --- | --- | --- |
+| New tab (agent picker) | `prefix c`, `Ctrl+T` | `prefix c`, `Ctrl+T` | `prefix c` | `prefix c` | `Cmd+T`, `prefix c` |
+| Next tab | `prefix n` | `prefix n`, `Ctrl+→` | `prefix n` | `prefix n` | `Cmd+Shift+]`, `prefix n` |
+| Previous tab | `prefix p` | `prefix p`, `Ctrl+←` | `prefix p` | `prefix p` | `Cmd+Shift+[`, `prefix p` |
+| Select tab | `prefix 1–9` | `prefix 1–9` | `prefix 0–9` | `prefix 1–9` | `Ctrl+1–9`, `prefix 1–9` |
+| Rename tab | `prefix T`, `prefix ,` | `prefix T`, `prefix ,` | `prefix ,` | `prefix T` | `Cmd+R`, `prefix T`, `prefix ,` |
+| Close tab | `prefix X` | `prefix X` | `prefix &` | `prefix X` | `prefix X` |
+| New workspace | `prefix N` | `prefix N` | `prefix N` | `prefix N` | `Cmd+N`, `prefix N` |
+| Edit workspace | `prefix W` | `prefix W` | `prefix $` | `prefix W` | `Cmd+Shift+R`, `prefix W` |
+| Next workspace | `prefix }` | `prefix }` | `prefix }` | `prefix }` | `prefix }` |
+| Previous workspace | `prefix {` | `prefix {` | `prefix {` | `prefix {` | `prefix {` |
+| Choose workspace | `prefix w` | `prefix w` | `prefix s` | `prefix w`, `prefix g` | `Cmd+P`, `prefix w` |
+| Select workspace |  |  |  |  | `Cmd+1–9` |
+| Close workspace |  |  |  | `prefix D` | `Cmd+Shift+W` |
+| Find agent | `prefix g` | `prefix g` | `prefix G` | `prefix f` | `Cmd+Shift+P`, `prefix g` |
+| Choose agent | `prefix a` | `prefix a` |  |  | `prefix a` |
+| Next agent | `prefix ]` | `prefix ]` |  |  | `prefix ]` |
+| Previous agent | `prefix [` | `prefix [` |  |  | `prefix [` |
+| Last visited agent | `prefix Tab` | `prefix Tab` |  |  | `prefix Tab` |
+| Jump to attention | `prefix f`, `F1` | `prefix f`, `F1` | `prefix F` | `prefix o` | `Cmd+Shift+U`, `prefix f` |
+| New agent | `prefix A`, `prefix Ctrl+A` | `prefix A`, `prefix Ctrl+A` | `prefix a` | `prefix a` | `prefix A`, `prefix Ctrl+A` |
+| Mute / unmute sounds | `prefix m` | `prefix m` | `prefix m` | `prefix m` | `prefix m` |
+| Focus left | `prefix ←`, `prefix h` | `prefix ←`, `prefix h` | `prefix ←` | `prefix h` | `Cmd+Opt+←`, `prefix ←`, `prefix h` |
+| Focus down | `prefix ↓`, `prefix j` | `prefix ↓`, `prefix j` | `prefix ↓` | `prefix j` | `Cmd+Opt+↓`, `prefix ↓`, `prefix j` |
+| Focus up | `prefix ↑`, `prefix k` | `prefix ↑`, `prefix k` | `prefix ↑` | `prefix k` | `Cmd+Opt+↑`, `prefix ↑`, `prefix k` |
+| Focus right | `prefix →`, `prefix l` | `prefix →`, `prefix l` | `prefix →` | `prefix l` | `Cmd+Opt+→`, `prefix →`, `prefix l` |
+| Swap left | `prefix H`, `prefix Shift+←` | `prefix H`, `prefix Shift+←` |  | `prefix H` | `prefix H`, `prefix Shift+←` |
+| Swap down | `prefix J`, `prefix Shift+↓` | `prefix J`, `prefix Shift+↓` |  | `prefix J` | `prefix J`, `prefix Shift+↓` |
+| Swap up | `prefix K`, `prefix Shift+↑` | `prefix K`, `prefix Shift+↑` |  | `prefix K` | `prefix K`, `prefix Shift+↑` |
+| Swap right | `prefix L`, `prefix Shift+→` | `prefix L`, `prefix Shift+→` |  | `prefix L` | `prefix L`, `prefix Shift+→` |
+| Next pane |  |  | `prefix o` | `prefix Tab` |  |
+| Previous pane |  |  |  | `prefix Shift+Tab` |  |
+| Split right | `prefix v`, `prefix %` | `prefix v`, `prefix %` | `prefix %` | `prefix v` | `Cmd+D`, `prefix v`, `prefix %` |
+| Split down | `prefix -`, `prefix "` | `prefix -`, `prefix "` | `prefix "` | `prefix -` | `Cmd+Shift+D`, `prefix -`, `prefix "` |
+| Resize mode | `prefix r` | `prefix r` |  | `prefix r` | `prefix r` |
+| Resize left |  |  | `prefix Ctrl+←` |  | `Ctrl+Shift+H` |
+| Resize down |  |  | `prefix Ctrl+↓` |  | `Ctrl+Shift+J` |
+| Resize up |  |  | `prefix Ctrl+↑` |  | `Ctrl+Shift+K` |
+| Resize right |  |  | `prefix Ctrl+→` |  | `Ctrl+Shift+L` |
+| Zoom / unzoom pane | `prefix z` | `prefix z` | `prefix z` | `prefix z` | `Cmd+Shift+Enter`, `prefix z` |
+| Move pane to a new tab | `prefix !` | `prefix !` | `prefix !` | `prefix !` | `prefix !` |
+| Close pane | `prefix x` | `prefix x` | `prefix x` | `prefix x` | `Cmd+W`, `prefix x` |
+| Reopen last closed agent | `prefix u`, `Ctrl+Shift+T`, `Cmd+Shift+T` | `prefix u`, `Ctrl+Shift+T`, `Cmd+Shift+T` | `prefix u` | `prefix u` | `Cmd+Shift+T`, `prefix u` |
+| Scroll / copy mode | `prefix s` | `prefix s` | `prefix [` | `prefix [` | `Cmd+Shift+M`, `prefix s` |
+| Paste copied text |  |  | `prefix ]` |  |  |
+| Detach | `prefix q`, `prefix d` | `prefix q`, `prefix d` | `prefix d` | `prefix q` | `prefix q`, `prefix d` |
+| Toggle sidebar | `prefix b` | `prefix b` | `prefix b` | `prefix b` | `Cmd+B`, `prefix b` |
+| Review changes | `prefix e` | `prefix e` | `prefix e` | `prefix e` | `prefix e` |
+| Setup | `prefix i`, `prefix C` | `prefix i`, `prefix C` | `prefix C` | `prefix s` | `Cmd+,`, `prefix i`, `prefix C` |
+| All shortcuts | `prefix ?` | `prefix ?` | `prefix ?` | `prefix ?` | `prefix ?` |
 
 ## Review changes
 

@@ -139,7 +139,7 @@ const corgiPrefix: Binding[] = [
   { key: 65, mods: {}, prefixed: true, action: { name: "new-agent" } },
   { key: 1, mods: {}, prefixed: true, action: { name: "new-agent" } },
 ];
-const tables: Record<Preset, Binding[]> = {
+const baseTables: Record<Exclude<Preset, "azerty">, Binding[]> = {
   corgi: [
     ...corgiPrefix,
     { key: 20, mods: {}, prefixed: false, action: { name: "new" } },
@@ -651,6 +651,16 @@ const tables: Record<Preset, Binding[]> = {
     ...corgiPrefix,
   ],
 };
+/** Corgi's keys, plus Ctrl+←/→ for the previous and next tab: on an AZERTY
+ * keyboard the digits sit behind Shift, so `prefix 1-9` is out of easy reach. */
+const tables: Record<Preset, Binding[]> = {
+  ...baseTables,
+  azerty: [
+    ...baseTables.corgi,
+    { key: 57350, mods: { ctrl: true }, prefixed: false, action: { name: "prev" } },
+    { key: 57351, mods: { ctrl: true }, prefixed: false, action: { name: "next" } },
+  ],
+};
 export function table(preset: Preset): Binding[] {
   return tables[preset];
 }
@@ -736,9 +746,10 @@ export function compact(b: Binding): string {
 }
 
 export function writeTable(presets?: Preset[]): string {
-  const selected = presets ?? (["corgi", "tmux", "herdr", "cmux"] as Preset[]);
+  const selected = presets ?? (["corgi", "azerty", "tmux", "herdr", "cmux"] as Preset[]);
   const titleCase: Record<string, string> = {
     corgi: "Corgi",
+    azerty: "AZERTY",
     tmux: "tmux",
     herdr: "Herdr",
     cmux: "cmux",

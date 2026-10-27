@@ -84,7 +84,7 @@ export function read(file: string): Preferences {
 }
 const enums = {
   agents: ["workspace", "all"],
-  preset: ["corgi", "tmux", "herdr", "cmux"],
+  preset: ["corgi", "azerty", "tmux", "herdr", "cmux"],
   prefix: ["ctrl_b", "ctrl_a"],
 } as const;
 export function readExisting(file: string): Preferences | null {

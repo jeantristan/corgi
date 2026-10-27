@@ -106,6 +106,7 @@ test("keys that arrive as bytes", () => {
   expect(lookup("herdr", true, 103)).toEqual({ name: "choose-workspace" });
   expect(lookup("corgi", true, 37)).toEqual({ name: "split", value: "right" });
   expect(lookup("corgi", false, 20)).toEqual({ name: "new" });
+  expect(lookup("azerty", true, 110)).toEqual({ name: "next" });
   expect(lookup("cmux", false, 20)).toBeNull();
   expect(lookup("tmux", true, 118)).toBeNull();
   expect(lookup("corgi", true, 0xf0)).toBeNull();
@@ -124,6 +125,10 @@ test("keys that arrive as sequences", () => {
     ["tmux", false, 57350, {}, null],
     ["herdr", true, 57346, { shift: true }, { name: "prev-pane" }],
     ["corgi", false, 116, { ctrl: true }, null],
+    ["azerty", false, 57351, { ctrl: true }, { name: "next" }],
+    ["azerty", false, 57350, { ctrl: true }, { name: "prev" }],
+    ["corgi", false, 57351, { ctrl: true }, null],
+    ["tmux", false, 57351, { ctrl: true }, null],
     ["corgi", true, 99, {}, null],
     ["corgi", false, 57364, {}, { name: "attention" }],
     ["corgi", true, 57364, {}, { name: "attention" }],

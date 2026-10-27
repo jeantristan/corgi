@@ -346,7 +346,8 @@ export async function run(args = process.argv.slice(2)): Promise<void> {
     }
     case "keys": {
       const bindings = await import("./bindings");
-      if (args.length > 2 || (args[1] && !["corgi", "tmux", "herdr", "cmux"].includes(args[1]))) throw Error("Usage");
+      if (args.length > 2 || (args[1] && !["corgi", "azerty", "tmux", "herdr", "cmux"].includes(args[1])))
+        throw Error("Usage");
       process.stdout.write(bindings.writeTable(args[1] ? [args[1] as Preset] : undefined));
       return;
     }

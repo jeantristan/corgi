@@ -140,6 +140,7 @@ export function navigation(c: Column) {
   c.action("New tab → agent picker", act("new"), 2);
   c.alsoHeld("Also works directly", act("new"), 4);
   c.pair("Next / previous", act("next"), act("prev"), 2);
+  if (c.preset === "azerty") c.binding("Also works directly", "Ctrl+← / Ctrl+→", 4);
   c.binding("Select tab", c.preset === "tmux" ? "0–9" : c.preset === "cmux" ? "Ctrl+1–9 · P 1–9" : "1–9", 2);
   c.action("Rename", act("rename-tab"), 2);
   c.action("Close", act("close-tab"), 2);
